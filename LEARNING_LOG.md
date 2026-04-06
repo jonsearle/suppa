@@ -367,6 +367,213 @@ If any item was approximate:
 - Testing approach covers happy path + 8 edge cases
 - Comments explain "why" (design decisions) not just "what" (code structure)
 
+---
+
+## Day 9-10: Real Usage Simulation & Issue Discovery
+
+### What I tried
+
+- Simulated 5 realistic user scenarios (first-time user, messy inventory, meal diversity, recipe quality, full cooking workflow)
+- Analyzed code flow for each scenario to identify UX friction and data accuracy issues
+- Reviewed inventory parsing prompt for hallucination risks
+- Examined meal suggestion prompt for diversity and accuracy
+- Traced complete cooking workflow (start → confirm → deduct) for edge cases
+- Created REAL_USAGE_REPORT.md documenting all findings
+
+### What worked
+
+- **Two-step cooking flow is solid**: start() returns ingredients_to_deduct, complete() actually deducts. Prevents accidental data loss
+- **Defensive validation prevents hallucinations**: generateRecipeDetail() post-validates every ingredient exists. Recipe never reaches user if ingredients unavailable
+- **Error handling is comprehensive**: All endpoints return specific error messages (not generic "something went wrong")
+- **Approximate item highlighting**: Yellow badge on inventory items and warnings in CookingConfirm flag uncertain quantities
+- **Type safety prevents many bugs**: TypeScript caught likely type mismatches during development
+- **API contract is clear**: Request/response examples in docstrings make integration straightforward
+
+### What didn't work
+
+- **Deduction model is all-or-nothing**: When recipe uses 2 of 3 chicken breasts, entire inventory_item marked as used (date_used = now()). User loses the 1 leftover breast. After first meal, inventory becomes unreliable. **CRITICAL BUG**
+- **Insufficient quantity not prevented**: Recipe can deduct more than user has. Code warns but still deducts. Silently breaks inventory tracking
+- **Hallucination prevention has gaps**: Prompt says "Do NOT assume oil, salt, spices" but LLM might infer "basil" needs "a little oil" and include it. Real-world testing needed
+- **Ingredient name matching may fail**: Code matches `item.name.toLowerCase()` but doesn't handle plurals ("tomato" vs "tomatoes"). Recipe might be rejected incorrectly
+- **Unit conversions not handled**: Recipe wants "1 cup rice" but inventory has "500g rice". Name matches but semantically incompatible
+- **Empty inventory guidance is reactive**: Error message appears in Suggestions tab after user clicks button. Should warn proactively in Inventory tab
+- **Quantity feasibility not checked**: Recipe says "use 2 cups rice" but inventory shows "some rice" (quantity_approx=1). System allows deduction anyway, user frustrated
+
+### Key insight for AI PMs
+
+**Inventory accuracy is harder than it looks.** The current system treats inventory items as binary (present/absent, using soft-delete). But real cooking is continuous consumption (have 3 chicken, use 2, have 1 left). The deduction model must track partial quantities, not just mark items as "used". This is a schema + API design issue that affects everything downstream.
+
+**Approximate quantities need explicit user control.** "Some rice" is vague. Deducting it without asking "how much did you actually use?" makes the inventory unreliable. Frontend must get explicit confirmation before deducting approximate items.
+
+**LLM safety requires both prevention + validation.** The parsing prompt tries to prevent hallucinations ("Do NOT assume...") but testing is needed. The recipe generation validates afterward (post-validation). Both together are good, but prompt still needs testing against real-world inputs.
+
+### Technical discoveries
+
+1. **Deduction is fundamentally broken**
+   - Current: `UPDATE inventory_items SET date_used = now()` marks entire item as used
+   - Correct: Should be `UPDATE inventory_items SET quantity_approx = quantity_approx - amount_used`
+   - Or: Create usage_log table to track consumption (audit trail)
+   - Impact: After first recipe, inventory quantities become meaningless
+   - Fix Complexity: HIGH - affects deductInventory() in db.ts, API contract, frontend
+
+2. **Ingredient matching needs normalization**
+   - Code does: `item.name.toLowerCase() === ingredient.name.toLowerCase()`
+   - Problem: Doesn't handle plurals, variations ("chicken" vs "chicken breast")
+   - Also uses: `canonical_name` field, but only as fallback
+   - Risk: Recipe validation might fail for legitimate matches
+   - Fix: Add normalization function that handles plurals, adjectives, variations
+
+3. **Approximate quantities in deduction are imprecise**
+   - User says: "some rice" (quantity_approx = 1)
+   - System deducts: 1 unit
+   - Problem: "1" could mean "1 grain" or "1 pile" - completely ambiguous
+   - Solution: Before deducting, ask user: "You said 'some rice' - about how much did you use? (1 cup, 2 tbsp, etc.)"
+   - Current: System just deducts without asking, making inventory unreliable
+
+4. **Session state must be persistent**
+   - Current: In-memory `cookingSessions` object
+   - Problem: Lost if browser closes, server restarts, or load balancing routing to different server
+   - User experiences: "Cooking session not found" error after closing browser
+   - Recovery: None. User has to start over
+   - Fix: Move to cooking_sessions DB table with 24-hour expiry and cleanup job
+
+5. **Inventory accuracy is schema-level**
+   - Current schema: `inventory_items` table with `date_used` for soft-delete
+   - Problem: Can't track partial usage or multiple uses of same item
+   - Example: User cooks 3 recipes using same tomatoes. How do we track which were used where?
+   - Future: Need `usage_log` or `cooking_sessions` table linking deductions to recipes
+
+### Scenarios tested
+
+**Scenario 1: First-Time User**
+- Fresh start, tries to get suggestions immediately
+- Expected: "Add some inventory first" message
+- Finding: Error message correct but appears in wrong tab (Suggestions) instead of proactively in Inventory
+- UX Issue (HIGH): No call-to-action in error. Should have "Add Inventory" button that navigates to Inventory tab
+- Recommendation: Disable "Suggest Meals" button when inventory empty, show hint: "Add items first"
+
+**Scenario 2: Messy Inventory Input**
+- Input: "I have like 3 or 4 chicken breasts, some rice, maybe 2 tomatoes, a bunch of basil"
+- Expected: Parse with appropriate confidence levels
+- Findings:
+  - Range handling ("3 or 4") indeterminate - doesn't know to use higher value
+  - Hallucination risk: "basil" → does LLM assume "a little oil"? Unknown without real testing
+  - "Some rice" → quantity=1 per prompt, but "1 what?" Ambiguous
+  - "A bunch of basil" → unit="bunch" vs no unit? Unclear in prompt
+- Issues Found:
+  - (HIGH) Prompt doesn't handle ranges explicitly. Should say "ranges round up"
+  - (HIGH) Hallucination prevention has gaps. Need real-world testing to verify
+  - (MEDIUM) Prompt could suggest units where context clear ("rice" → "cups rice")
+
+**Scenario 3: Meal Suggestion Diversity**
+- Add: chicken, rice, tomatoes, basil, eggs, bread
+- Get: Breakfast, lunch, dinner suggestions
+- Expected: Each meal type appropriate, diverse recipes
+- Findings:
+  - Diversity not explicitly required: Could get "Tomato Chicken" and "Chicken Tomato" as separate suggestions
+  - Time estimate guidance vague: "breakfast=quick" doesn't mean 5-20 mins. Could be 45 mins
+  - With only 6 items, hard to be diverse
+  - Issues:
+    - (MEDIUM) No explicit diversity rule in prompt. Recipe variations could happen
+    - (MEDIUM) Time ranges not specific. Should be "breakfast=5-20 mins"
+    - (LOW) Limited inventory edge case hard to handle
+
+**Scenario 4: Recipe Quality & Feasibility**
+- Get suggestion → View recipe → Verify ingredients available
+- Expected: Recipe valid, all ingredients available, no hallucinations
+- Findings:
+  - (HIGH) Ingredient name matching could fail on plurals ("tomato" vs "tomatoes")
+  - (HIGH) Unit conversions not handled ("1 cup rice" vs "500g rice")
+  - (MEDIUM) Quantity feasibility not checked (recipe wants more than user has)
+  - (MEDIUM) Validation only checks name/canonical_name, not quantity
+- Design is sound (post-validation), but edge cases not handled
+
+**Scenario 5: Full Cooking Workflow (CRITICAL)**
+- Start with: 3 chicken, 2 cups rice, 3 tomatoes
+- Recipe uses: 2 chicken, 1 cup rice, 2 tomatoes
+- Flow: Add inventory → Get suggestion → View recipe → Start cooking → Confirm → Deduct
+- Expected After: Inventory shows 1 chicken, 1 cup rice, 1 tomato (NOT all deleted)
+- Findings:
+  - (CRITICAL) Deduction model is all-or-nothing. Marks entire inventory_item as date_used
+  - (CRITICAL) Result: All 3 chicken marked used even though only 2 used. User has invisible 1 chicken
+  - (HIGH) After first recipe, inventory becomes unreliable
+  - (HIGH) Approximate quantity deduction imprecise ("some rice" → deduct 1, but what's 1?)
+  - (MEDIUM) Insufficient quantity not blocked, just warned
+  - (MEDIUM) Session lost if browser closes
+- This breaks the entire system after first use. MUST FIX in Task 8
+
+### Issues categorized by severity
+
+**CRITICAL (breaks core feature):**
+1. Deduction model all-or-nothing - Inventory unreliable after first recipe
+2. Insufficient quantity not blocked - User can deduct more than has
+
+**HIGH (bad UX, must fix):**
+1. Hallucination prevention not tested - Need real LLM testing
+2. Empty inventory error on wrong tab - Should warn proactively
+3. Ingredient name matching plural/singular - Recipe might be rejected
+4. Unit conversions not handled - Recipe impossible to follow
+5. Quantity feasibility not checked - Recipe says more than user has
+6. Approximate quantity deduction imprecise - "Some rice" unclear
+7. Session timeout not handled - "Session not found" error with no recovery
+
+**MEDIUM (polish, nice to fix):**
+1. Diversity check not explicit - Recipe variations might occur
+2. Time estimate ranges vague - "Quick" doesn't mean 5-20 mins
+3. CookingConfirm doesn't show instructions - User might forget what they're making
+4. No inventory preview after deduction - User can't see what remains
+5. Range handling indeterminate - "3 or 4" parses unpredictably
+
+**LOW (cosmetic):**
+1. Empty state messaging cold - "No inventory yet" is correct but unwelcoming
+2. Approximate items yellow text on yellow - Hard to read
+3. Generic loading messages - "Finding recipes..." is fine
+
+### What's next (Task 8)
+
+**Must do:**
+1. Fix deduction model: Change from soft-delete to quantity reduction
+2. Block insufficient quantities: Warn or prevent deduction
+3. Test inventory parsing with real LLM on complex inputs
+4. Fix ingredient name matching: Handle plurals
+5. Add unit conversions for common items
+
+**Should do:**
+1. Test meal suggestion diversity with real LLM
+2. Add quantity feasibility check during recipe generation
+3. Persist sessions to DB for fault tolerance
+4. Ask user to confirm actual quantities used for approximate items
+5. Show inventory preview in CookingConfirm
+
+**Could do (Task 9):**
+1. Make diversity check explicit in prompt
+2. Specify time estimate ranges in prompt
+3. Show full instructions in CookingConfirm
+4. Add undo function (restore deducted items within 1 hour)
+5. Track cooking history for analytics
+
+### Key learnings
+
+**Inventory management design is critical.** The soft-delete + all-or-nothing deduction model is conceptually simple but breaks real-world usage. Switching to quantity-based tracking requires schema changes, API changes, and frontend changes. But it's non-negotiable for a cooking app.
+
+**Approximate quantities need explicit user control.** The system can't guess how much "some rice" means. Must ask user before deducting. This is a UX principle: let the user be in control of uncertain data.
+
+**LLM safety is layered.** Prevention (prompt engineering) + validation (post-check) together work better than either alone. But both must be tested against real-world inputs.
+
+**Sessions must be persistent.** In-memory state is fine for development but breaks in production. Must move to DB early.
+
+**Testing with real LLM is non-negotiable.** Analysis and theory only go so far. Need actual OpenAI responses to validate parsing, hallucination, and diversity.
+
+### Code quality improvements
+
+- The code is clean and well-structured, but the deduction model needs rethinking at the schema level
+- Post-validation of recipes is excellent pattern for LLM safety
+- Error messages are clear and specific
+- Type safety is solid throughout
+- Session handling needs persistence layer
+
+
+
 ### Edge Cases Discovered
 
 1. **Approximate ingredients need explicit warning**: Can't just track confidence, must show in UX
