@@ -26,21 +26,36 @@ SELECT * FROM users WHERE id = '123e4567-e89b-12d3-a456-426614174000';
 
 ### `inventory_items`
 
-Track food items a user has available. Items are marked as "used" when deducted.
+Track food items a user has available. Supports quantity taxonomy (exact, approximate, boolean).
 
 **Columns:**
 - `id` (UUID, PRIMARY KEY): Item identifier, auto-generated
 - `user_id` (UUID, FOREIGN KEY): References `users(id)`, not null
-- `name` (TEXT): Item name (e.g., "chicken", "tomatoes", "basil"), not null
-- `quantity_approx` (NUMERIC): Approximate quantity, optional (e.g., 3, 1.5, null for "some")
-- `unit` (TEXT): Unit of measurement, optional (e.g., "pieces", "grams", "bunch")
+- `name` (TEXT): Item name (what user typed), not null
+- `canonical_name` (TEXT): Normalized name for deduplication (e.g., "potato", "green_bean")
+- `has_item` (BOOLEAN): For Category 1 items (salt, spices, oils) where only presence matters
+- `quantity_approx` (NUMERIC): Approximate quantity, optional (e.g., 3, 1.5, 0.5 for fractions)
+- `unit` (TEXT): Unit of measurement, optional (e.g., "pieces", "g", "cup")
+- `confidence` (VARCHAR): 'exact' for user-specified quantities, 'approximate' for estimates
 - `date_added` (TIMESTAMP): When item was added, defaults to now()
 - `date_used` (TIMESTAMP): When item was deducted/used, null until deducted
 
+**Quantity Taxonomy:**
+1. Boolean items: has_item=true (salt, curry powder) — user either has it or doesn't
+2. Exact quantities: confidence='exact' (500g beef, 3 apples) — user specified precisely
+3. Exact counts: confidence='exact', unit='pieces' (2 chicken breasts)
+4. Rough quantities: confidence='approximate' (some salad, lots of carrots)
+
+**Deduplication:**
+- canonical_name normalizes variations: "potatoes" → "potato", "green beans" → "green_bean"
+- addInventoryItem() merges items with same canonical_name + user_id
+- Query logic uses canonical_name for ingredient matching
+
 **Indexes:**
 - Primary key on `id`
-- Index on `user_id` for fast filtering by user
-- Index on `(user_id, date_used)` to quickly find active inventory
+- Index on `user_id` for fast filtering
+- Index on `(user_id, canonical_name)` for deduplication lookups
+- Index on `(user_id, date_used)` for active inventory queries
 
 **Example queries:**
 ```sql
@@ -108,13 +123,17 @@ CREATE TABLE inventory_items (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES users(id),
   name TEXT NOT NULL,
+  canonical_name TEXT,
+  has_item BOOLEAN DEFAULT FALSE,
   quantity_approx NUMERIC,
   unit TEXT,
+  confidence VARCHAR(20) DEFAULT 'approximate',
   date_added TIMESTAMP DEFAULT now(),
   date_used TIMESTAMP
 );
 
 CREATE INDEX idx_inventory_user ON inventory_items(user_id);
+CREATE INDEX idx_inventory_canonical ON inventory_items(user_id, canonical_name);
 CREATE INDEX idx_inventory_active ON inventory_items(user_id, date_used);
 
 -- Create chat_messages table
