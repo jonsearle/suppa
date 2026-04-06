@@ -13,6 +13,7 @@
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import 'dotenv/config';
+import inventoryRouter from './api/inventory';
 
 const app: Express = express();
 
@@ -25,9 +26,10 @@ app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Mount routers
+app.use('/api/inventory', inventoryRouter);
+
 // TODO: Implement endpoints
-// - POST /api/inventory
-// - GET /api/inventory
 // - POST /api/chat
 // - POST /api/cooking/start
 // - POST /api/cooking/complete
