@@ -14,6 +14,95 @@ import { RecipeDetail, InventoryItem, StartCookingRequest } from '../../shared/t
 const router = Router();
 
 /**
+ * POST /api/cooking/detail
+ * Get full recipe details from recipe name, description, and time estimate
+ * This endpoint generates the detailed recipe with ingredients and instructions
+ *
+ * Request body:
+ * {
+ *   "recipe_name": "Tomato Basil Chicken",
+ *   "recipe_description": "Pan-seared chicken with fresh tomatoes and basil. Light and fresh.",
+ *   "recipe_time_mins": 25
+ * }
+ *
+ * Response:
+ * {
+ *   "data": {
+ *     "name": "Tomato Basil Chicken",
+ *     "description": "...",
+ *     "time_estimate_mins": 25,
+ *     "ingredients": [...],
+ *     "instructions": [...]
+ *   }
+ * }
+ */
+router.post('/detail', async (req: Request, res: Response) => {
+  try {
+    const { recipe_name, recipe_description, recipe_time_mins } = req.body;
+
+    // Validate input
+    if (!recipe_name || typeof recipe_name !== 'string' || !recipe_name.trim()) {
+      return res.status(400).json({
+        error: 'Missing or invalid recipe_name field',
+        details: 'recipe_name must be a non-empty string',
+      });
+    }
+
+    if (!recipe_description || typeof recipe_description !== 'string' || !recipe_description.trim()) {
+      return res.status(400).json({
+        error: 'Missing or invalid recipe_description field',
+        details: 'recipe_description must be a non-empty string',
+      });
+    }
+
+    if (recipe_time_mins === undefined || typeof recipe_time_mins !== 'number') {
+      return res.status(400).json({
+        error: 'Missing or invalid recipe_time_mins field',
+        details: 'recipe_time_mins must be a number (in minutes)',
+      });
+    }
+
+    // Get current inventory to validate recipe can be made
+    const currentInventory = await getInventory();
+
+    if (currentInventory.length === 0) {
+      return res.status(400).json({
+        error: 'Cannot generate recipe with empty inventory',
+        details: 'Add items to your inventory before requesting recipe details',
+      });
+    }
+
+    // Generate detailed recipe from minimal input
+    const recipeDetail = await generateRecipeDetail(
+      recipe_name.trim(),
+      recipe_description.trim(),
+      currentInventory
+    );
+
+    res.status(200).json({
+      data: recipeDetail,
+      message: 'Recipe details generated successfully',
+    });
+  } catch (error) {
+    console.error('Error in POST /api/cooking/detail:', error);
+
+    const errorMsg = error instanceof Error ? error.message : String(error);
+
+    if (errorMsg.includes('SUPABASE') || errorMsg.includes('OPENAI')) {
+      return res.status(500).json({
+        error: 'Service configuration error',
+        details: errorMsg,
+      });
+    }
+
+    res.status(400).json({
+      error: 'Failed to generate recipe details',
+      details: errorMsg,
+    });
+  }
+});
+
+/**
  * In-memory storage for cooking sessions
  * In production, this would be persisted to database (cooking_sessions table)
  * Maps session_id -> { recipe, inventory_before, started_at }

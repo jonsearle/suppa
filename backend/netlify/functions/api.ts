@@ -14,6 +14,8 @@ import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import 'dotenv/config';
 import inventoryRouter from './api/inventory';
+import chatRouter from './api/chat';
+import cookingRouter from './api/cooking';
 
 const app: Express = express();
 
@@ -28,11 +30,8 @@ app.get('/api/health', (req: Request, res: Response) => {
 
 // Mount routers
 app.use('/api/inventory', inventoryRouter);
-
-// TODO: Implement endpoints
-// - POST /api/chat
-// - POST /api/cooking/start
-// - POST /api/cooking/complete
+app.use('/api/chat', chatRouter);
+app.use('/api/cooking', cookingRouter);
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response) => {

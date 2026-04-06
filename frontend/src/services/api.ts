@@ -117,14 +117,15 @@ export async function suggestMeals(
  * @throws ApiError on network or server errors
  */
 export async function getRecipeDetail(recipe: Recipe): Promise<RecipeDetail> {
-  const data = await fetchWithErrorHandling('/api/chat', {
+  const data = await fetchWithErrorHandling('/api/cooking/detail', {
     method: 'POST',
     body: JSON.stringify({
-      message: `Detailed recipe for ${recipe.name}`,
-      recipe: recipe,
+      recipe_name: recipe.name,
+      recipe_description: recipe.description,
+      recipe_time_mins: recipe.time_estimate_mins,
     }),
   });
-  return data.recipe;
+  return data.recipe || data.data;
 }
 
 /**
@@ -139,11 +140,15 @@ export async function startCooking(
 }> {
   const data = await fetchWithErrorHandling('/api/cooking/start', {
     method: 'POST',
-    body: JSON.stringify({ recipe }),
+    body: JSON.stringify({
+      recipe_name: recipe.name,
+      recipe_description: recipe.description,
+      recipe_time_mins: recipe.time_estimate_mins,
+    }),
   });
   return {
-    sessionId: data.session_id,
-    ingredientsToDeduct: data.ingredients_to_deduct || [],
+    sessionId: data.data.session_id,
+    ingredientsToDeduct: data.data.ingredients_to_deduct || [],
   };
 }
 
