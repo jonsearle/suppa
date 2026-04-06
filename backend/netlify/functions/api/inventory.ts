@@ -43,15 +43,11 @@ router.post('/', async (req: Request, res: Response) => {
     // Parse the user input using LLM
     const parsedItems = await parseInventoryInput(user_input.trim());
 
-    // Store each parsed item in database
+    // Store each parsed item in database (with merge-on-add deduplication)
     const storedItems: InventoryItem[] = [];
     for (const item of parsedItems) {
       try {
-        const stored = await addInventoryItem(
-          item.name,
-          item.quantity_approx || undefined,
-          item.unit || undefined
-        );
+        const stored = await addInventoryItem(item);
         storedItems.push(stored);
       } catch (error) {
         console.error(`Failed to store item ${item.name}:`, error);

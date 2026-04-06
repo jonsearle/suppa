@@ -64,33 +64,72 @@ export async function getInventory(): Promise<InventoryItem[]> {
 }
 
 /**
- * Add a single inventory item
- * Returns the newly created item with auto-generated ID and timestamps
+ * Add a single inventory item with merge-on-add deduplication
+ * If an item with the same canonical_name exists, merge by updating quantity
+ * Otherwise, create new item
+ * Returns the item (either newly created or updated via merge)
  */
 export async function addInventoryItem(
-  name: string,
-  quantity_approx?: number,
-  unit?: string
+  item: Omit<InventoryItem, 'id' | 'user_id' | 'date_added' | 'date_used'>
 ): Promise<InventoryItem> {
   const client = getSupabaseClient();
   const userId = getUserId();
+  const { getCanonicalName } = await import('./canonical-foods');
 
+  const canonicalName = item.canonical_name || getCanonicalName(item.name);
+
+  // Check if item with same canonical_name already exists for this user
+  const { data: existing, error: checkError } = await client
+    .from('inventory_items')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('canonical_name', canonicalName)
+    .is('date_used', null)
+    .single();
+
+  if (checkError && checkError.code !== 'PGRST116') {
+    // PGRST116 = no rows found, which is expected
+    throw checkError;
+  }
+
+  if (existing) {
+    // Merge: update quantity and unit, keep most recent name
+    const { data, error } = await client
+      .from('inventory_items')
+      .update({
+        name: item.name || existing.name,
+        quantity_approx: item.quantity_approx !== undefined ? item.quantity_approx : existing.quantity_approx,
+        unit: item.unit || existing.unit,
+        confidence: item.confidence || existing.confidence,
+        has_item: item.has_item !== undefined ? item.has_item : existing.has_item,
+        date_added: new Date().toISOString(),
+      })
+      .eq('id', existing.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data as InventoryItem;
+  }
+
+  // No existing item: create new
   const { data, error } = await client
     .from('inventory_items')
-    .insert({
-      user_id: userId,
-      name,
-      quantity_approx: quantity_approx || null,
-      unit: unit || null,
-      date_added: new Date().toISOString(),
-    })
+    .insert([
+      {
+        user_id: userId,
+        name: item.name,
+        canonical_name: canonicalName,
+        has_item: item.has_item || false,
+        quantity_approx: item.quantity_approx || null,
+        unit: item.unit || null,
+        confidence: item.confidence || 'approximate',
+      },
+    ])
     .select()
     .single();
 
-  if (error) {
-    throw new Error(`Failed to add inventory item: ${error.message}`);
-  }
-
+  if (error) throw error;
   return data as InventoryItem;
 }
 
