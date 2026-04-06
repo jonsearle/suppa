@@ -1,0 +1,14 @@
+[build]
+  command = "npm install && npm run build"
+  functions = "netlify/functions"
+  publish = "dist"
+
+[dev]
+  functions = "netlify/functions"
+  port = 8888
+
+[context.production]
+  environment = { NODE_ENV = "production" }
+
+[context.deploy-preview]
+  environment = { NODE_ENV = "development" }

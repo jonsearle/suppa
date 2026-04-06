@@ -1,0 +1,49 @@
+# Environment files
+.env.local
+.env.*.local
+
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Testing
+/coverage
+.nyc_output
+
+# Production
+/build
+/dist
+
+# Misc
+.DS_Store
+*.pem
+.vscode/
+.idea/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# TypeScript
+*.tsbuildinfo
+
+# Frontend
+frontend/build/
+frontend/.env.local
+frontend/.env.*.local
+frontend/dist/
+
+# Backend
+backend/dist/
+backend/.env.local
+backend/.env.*.local
+
+# IDEs
+.vscode
+.idea
+*.swp
+*.swo
+*~
