@@ -1,109 +1,170 @@
 /**
  * Frontend API client for Suppa backend
- * Wraps axios for HTTP communication with backend endpoints
+ * Handles HTTP communication with backend endpoints
+ * Provides error handling and response parsing
  */
 
-import axios from 'axios';
 import type {
   Recipe,
   RecipeDetail,
   InventoryItem,
-  ChatMessage,
   MealSuggestions,
 } from '../types';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8888';
 
-const client = axios.create({
-  baseURL: API_URL,
-  timeout: 10000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public details?: string
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+/**
+ * Helper function to handle fetch responses and errors
+ */
+async function fetchWithErrorHandling(
+  endpoint: string,
+  options: RequestInit
+): Promise<any> {
+  try {
+    const response = await fetch(`${API_URL}${endpoint}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const errorMessage =
+        data.error ||
+        data.message ||
+        `Request failed with status ${response.status}`;
+      throw new ApiError(errorMessage, response.status, data.details);
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    if (error instanceof TypeError) {
+      throw new ApiError(
+        'Connection failed. Is the backend running?',
+        0,
+        error.message
+      );
+    }
+    throw new ApiError(
+      'An unexpected error occurred',
+      0,
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
 
 /**
  * Parse user inventory input and add items to database
+ * @throws ApiError on network or server errors
  */
 export async function addInventory(userInput: string): Promise<InventoryItem[]> {
-  const response = await client.post('/api/inventory', {
-    user_input: userInput,
+  const data = await fetchWithErrorHandling('/api/inventory', {
+    method: 'POST',
+    body: JSON.stringify({ user_input: userInput }),
   });
-  return response.data.items;
+  return data.items || [];
 }
 
 /**
  * Get current active inventory for the user
+ * @throws ApiError on network or server errors
  */
 export async function getInventory(): Promise<InventoryItem[]> {
-  const response = await client.get('/api/inventory');
-  return response.data.items;
+  const data = await fetchWithErrorHandling('/api/inventory', {
+    method: 'GET',
+  });
+  return data.items || [];
 }
 
 /**
  * Get meal suggestions for given inventory and meal type
+ * @throws ApiError on network or server errors
  */
 export async function suggestMeals(
   mealType: 'breakfast' | 'lunch' | 'dinner'
 ): Promise<MealSuggestions> {
-  const response = await client.post('/api/chat', {
-    message: `Suggest ${mealType} meals`,
-    meal_type: mealType,
+  const data = await fetchWithErrorHandling('/api/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: `Suggest ${mealType} meals`,
+      meal_type: mealType,
+    }),
   });
   return {
-    recipes: response.data.recipes || [],
+    recipes: data.recipes || [],
   };
 }
 
 /**
  * Get detailed recipe for a specific meal
+ * @throws ApiError on network or server errors
  */
-export async function getRecipeDetail(
-  recipeName: string,
-  keyIngredients: string[],
-  briefMethod: string
-): Promise<RecipeDetail> {
-  const response = await client.post('/api/chat', {
-    message: `Detailed recipe for ${recipeName}`,
-    recipe_request: {
-      name: recipeName,
-      key_ingredients: keyIngredients,
-      brief_method: briefMethod,
-    },
+export async function getRecipeDetail(recipe: Recipe): Promise<RecipeDetail> {
+  const data = await fetchWithErrorHandling('/api/chat', {
+    method: 'POST',
+    body: JSON.stringify({
+      message: `Detailed recipe for ${recipe.name}`,
+      recipe: recipe,
+    }),
   });
-  return response.data.recipe;
+  return data.recipe;
 }
 
 /**
- * Send a chat message and get a response
+ * Start cooking - returns ingredients to be deducted
+ * @throws ApiError on network or server errors
  */
-export async function sendChatMessage(message: string): Promise<ChatMessage> {
-  const response = await client.post('/api/chat', {
-    message,
+export async function startCooking(
+  recipe: RecipeDetail
+): Promise<{
+  sessionId: string;
+  ingredientsToDeduct: InventoryItem[];
+}> {
+  const data = await fetchWithErrorHandling('/api/cooking/start', {
+    method: 'POST',
+    body: JSON.stringify({ recipe }),
   });
-  return response.data.message;
+  return {
+    sessionId: data.session_id,
+    ingredientsToDeduct: data.ingredients_to_deduct || [],
+  };
 }
 
 /**
- * Mark cooking as started (for tracking purposes)
- */
-export async function startCooking(recipeName: string): Promise<void> {
-  await client.post('/api/cooking/start', {
-    recipe_name: recipeName,
-  });
-}
-
-/**
- * Mark cooking as complete and deduct ingredients from inventory
+ * Complete cooking and deduct ingredients from inventory
+ * @throws ApiError on network or server errors
  */
 export async function completeCooking(
+  sessionId: string,
   recipeName: string,
   ingredientsUsed: Array<{ inventory_item_id: string; quantity: number }>
 ): Promise<void> {
-  await client.post('/api/cooking/complete', {
-    recipe_name: recipeName,
-    ingredients_used: ingredientsUsed,
+  await fetchWithErrorHandling('/api/cooking/complete', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: sessionId,
+      recipe_name: recipeName,
+      ingredients_used: ingredientsUsed,
+    }),
   });
 }
 
-export default client;
+export { ApiError };
+export default { addInventory, getInventory, suggestMeals, getRecipeDetail, startCooking, completeCooking };
