@@ -14,13 +14,17 @@ export interface User {
 /**
  * A food item in user's inventory
  * Items are never deleted, just marked with date_used when consumed
+ * Supports quantity taxonomy: boolean items, exact quantities, and approximate quantities
  */
 export interface InventoryItem {
   id: string;
   user_id: string;
-  name: string;
-  quantity_approx?: number;
-  unit?: string;
+  name: string;  // What user typed
+  canonical_name?: string;  // Normalized for deduplication
+  has_item?: boolean;  // true for pantry staples (salt, spices)
+  quantity_approx?: number;  // Can be null for boolean items
+  unit?: string;  // Unit of measurement (nullable)
+  confidence: 'exact' | 'approximate';  // Tracking certainty
   date_added: string;
   date_used?: string;
 }
@@ -43,9 +47,8 @@ export interface ChatMessage {
  */
 export interface Recipe {
   name: string;
+  description: string;  // Menu-style description with health/character notes
   time_estimate_mins: number;
-  key_ingredients: string[];
-  brief_method: string;
 }
 
 /**
@@ -57,14 +60,12 @@ export interface MealSuggestions {
 
 /**
  * Full recipe detail with ingredients and step-by-step instructions
- * Extends Recipe with more detailed cooking information
  */
-export interface RecipeDetail extends Recipe {
-  ingredients: Array<{
-    name: string;
-    quantity: number | string;
-    unit: string;
-  }>;
+export interface RecipeDetail {
+  name: string;
+  description: string;
+  time_estimate_mins: number;
+  ingredients: Array<{ name: string; quantity: number | string; unit: string }>;
   instructions: string[];
 }
 
