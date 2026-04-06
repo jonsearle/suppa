@@ -6,7 +6,7 @@
  */
 
 import OpenAI from 'openai';
-import { InventoryItem, Recipe, RecipeDetail } from '../../../shared/types';
+import { InventoryItem, Recipe, RecipeDetail } from '../../shared/types';
 
 let openaiClient: OpenAI | null = null;
 

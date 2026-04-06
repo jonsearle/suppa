@@ -115,3 +115,128 @@ Manual testing: `backend/scripts/test-parsing.ts` runs 5 real-world test cases a
 - Type safety throughout: leveraging TypeScript's Omit, Partial, Pick utilities
 - Comments explain the "why" not the "what" - code is self-documenting
 - Consistent async/await pattern for all async operations
+
+---
+
+## Day 4: Meal Suggestion API Testing & Iteration
+
+### What I tried
+
+- Created comprehensive Jest test suite for meal suggestion API (`tests/chat.test.ts`)
+- Implemented 5 test cases covering diverse inventory scenarios:
+  1. Italian dinner (chicken, tomatoes, basil, pasta)
+  2. Breakfast (eggs, bread, butter)
+  3. Asian lunch (rice, soy sauce, chicken, garlic, vegetables)
+  4. Limited inventory (eggs and bread only)
+  5. Pantry staples only (edge case)
+- Built comprehensive manual testing script (`scripts/test-suggestions-comprehensive.ts`)
+- Fixed import path issues in prompts.ts (relative path to shared/types)
+- Set up Jest environment configuration to load .env.local with API key
+- Created detailed testing documentation:
+  - `MANUAL_TEST_GUIDE.md`: Instructions for running tests and evaluating results
+  - `PROMPT_ANALYSIS.md`: Deep analysis of current prompt with proposed improvements
+
+### Current State (Pre-Testing)
+
+**Implementation Status**: Complete
+- `suggestMeals()` function exists in `prompts.ts`
+- System prompt includes hallucination prevention
+- JSON-only response format enforced
+- Meal type guidance included (breakfast/lunch/dinner)
+
+**Test Suite Status**: Ready but Skipped
+- Jest tests created and configured
+- Tests skip by default (no OPENAI_API_KEY in environment)
+- To run: `export OPENAI_API_KEY="sk-..." && npm test -- chat.test.ts`
+
+**Manual Script Status**: Ready to execute
+- `test-suggestions-comprehensive.ts` validates:
+  - 3-5 suggestions per test (or fail gracefully for edge cases)
+  - Diversity (no duplicate meal names)
+  - No hallucinated ingredients
+  - Informative descriptions (10+ chars minimum)
+  - Reasonable time estimates (1-120 mins)
+- Run with: `export OPENAI_API_KEY="sk-..." && npx ts-node scripts/test-suggestions-comprehensive.ts`
+
+### Testing Approach
+
+Tests are blocked on needing an actual OpenAI API key. The testing would follow this flow:
+
+1. **Phase 1: Run Tests**
+   - Execute Jest test suite with 5 test cases
+   - Run comprehensive manual script
+   - Document pass/fail results
+
+2. **Phase 2: Analyze Results**
+   - Identify patterns in failures (hallucination? diversity? time estimates?)
+   - Evaluate response quality manually
+   - Compare against evaluation criteria in MANUAL_TEST_GUIDE.md
+
+3. **Phase 3: Iterate Prompts (if needed)**
+   - Proposed improvements documented in PROMPT_ANALYSIS.md:
+     - Improvement 1: Stronger hallucination prevention with explicit ingredient lists
+     - Improvement 2: Explicit diversity requirement (no recipe variations)
+     - Improvement 3: Specific time estimate ranges by meal type
+     - Improvement 4: Edge case guidance (limited inventory, pantry-only)
+     - Improvement 5: Concrete inventory matching examples
+
+4. **Phase 4: Re-test and Document**
+   - After each prompt change, re-run full test suite
+   - Document findings in LEARNING_LOG.md
+   - Commit changes once all tests pass
+
+### Key Insights from Analysis
+
+**Prompt Strengths**:
+1. Clear JSON format requirement with examples
+2. Explicit hallucination prevention lists (salt, oil, butter, spices, water)
+3. Meal type guidance for time realism
+4. Multiple ingredient emphasis for diversity
+5. Realism constraint for home cooking
+
+**Identified Weaknesses** (to watch during testing):
+1. Hallucination prevention might not cover all cases (what about milk, cheese, vinegar, soy sauce?)
+2. Diversity not explicitly required - might get variations of same recipe
+3. Time estimate ranges not specific (unclear if "breakfast = quick/light" means 5-15 or 5-30 mins)
+4. No guidance for edge cases (limited inventory, pantry-only scenarios)
+5. Inventory format could be clearer (using "available" vs explicit "no quantity" notation)
+
+### Technical Decisions
+
+1. **Jest + ts-node hybrid approach**: Jest for structured tests (easier CI/CD), ts-node script for manual exploration
+2. **Test blocking**: Tests skip gracefully when OPENAI_API_KEY not set, no hard failure
+3. **Detailed documentation**: Created guides for non-technical testing and detailed prompt analysis
+4. **Validation criteria**: Clear pass/fail criteria in comprehensive script (3-5 recipes, diversity, no hallucinations, reasonable times)
+
+### What's Next
+
+**To Complete Task 3**:
+1. Obtain OPENAI_API_KEY from environment/secrets
+2. Run tests: `export OPENAI_API_KEY="sk-..." && npm test -- chat.test.ts`
+3. Run manual script: `export OPENAI_API_KEY="sk-..." && npx ts-node scripts/test-suggestions-comprehensive.ts`
+4. Evaluate results against MANUAL_TEST_GUIDE.md criteria
+5. If failures detected:
+   - Identify root cause (hallucination, diversity, time estimates, etc.)
+   - Apply relevant improvements from PROMPT_ANALYSIS.md
+   - Update prompts.ts with improved systemPrompt
+   - Re-run tests
+6. Document all findings in LEARNING_LOG.md with:
+   - What was tested
+   - What worked/didn't work
+   - Any prompt iterations and their impact
+   - Key learnings about LLM evaluation
+
+**Estimated Time to Complete**:
+- Testing: 5-10 minutes (API calls are fast)
+- Analysis: 10-15 minutes (manual review of results)
+- Iteration (if needed): 10-20 minutes per cycle (prompt update + re-test)
+- Documentation: 5 minutes (update LEARNING_LOG.md)
+
+### Code Quality Notes
+
+- All test cases have clear docstrings explaining what's being tested
+- Comprehensive manual script has detailed validation criteria comments
+- Prompt analysis document provides concrete before/after examples
+- No mocking of OpenAI API - tests use real API calls for realistic evaluation
+- Test infrastructure is DRY: reusable inventory item creation helper function
+- Error handling covers both API failures and test assertion failures
