@@ -240,3 +240,137 @@ Tests are blocked on needing an actual OpenAI API key. The testing would follow 
 - No mocking of OpenAI API - tests use real API calls for realistic evaluation
 - Test infrastructure is DRY: reusable inventory item creation helper function
 - Error handling covers both API failures and test assertion failures
+
+---
+
+## Day 5: Cooking APIs & UX Design for Recoverability
+
+### What I tried
+
+- Implemented two cooking endpoints: POST /api/cooking/start and POST /api/cooking/complete
+- Designed confirmation UX following the recoverability principle from Learning Objectives
+- Built comprehensive test suite for cooking flow with 8 test cases covering edge cases
+- Implemented ingredient deduction logic with soft-delete pattern (date_used timestamps)
+- Integrated generateRecipeDetail validation to ensure recipes only use available ingredients
+- Designed in-memory session storage for MVP (future phase will persist to DB)
+
+### What worked
+
+- **Two-step cooking flow is solid**: Separating start (recipe generation) from complete (deduction) allows confirmation UX. User sees what will be deducted before data changes
+- **Confidence tracking in practice**: When ingredients_to_deduct includes confidence='approximate', frontend can warn "Rice quantity is approximate - verify before confirming". This directly implements the recoverability principle
+- **Soft-delete pattern for deduction**: Marking items with date_used = now() preserves audit trail while filtering them from active inventory. getInventory() filters IS NULL, so deducted items don't appear
+- **Session-based state**: In-memory cookingSessions object works well for MVP. Stores recipe, inventory_before, ingredients_to_deduct, timestamp. Session ID is created at start(), consumed at complete(), deleted after
+- **Validation at generation time**: generateRecipeDetail post-validates every ingredient against user's inventory. If LLM tries to suggest unavailable items, it throws error immediately. This prevents hallucination bugs
+- **Ingredient mapping by canonical_name**: Recipe suggests "chicken", inventory has "chicken breast" with canonical_name="chicken_breast". Matching by canonical_name handles variations correctly
+
+### What surprised me
+
+- **Deduction is atomic in intent, flexible in execution**: If some inventory items fail to deduct (e.g., already marked used), we report partial success. This is actually good UX - user sees which items deducted successfully
+- **Approximate quantities need explicit UX**: Just tracking confidence='approximate' isn't enough. Frontend must show warning and let user decide if they're comfortable with estimated quantity. Otherwise users might deduct wrong amounts
+- **The confirmation dialog is critical for kitchen use**: In actual cooking, user might:
+  - Start cooking chicken, realize mid-way they're making something else
+  - Use less of an ingredient than expected (recipe said 2 cups rice, only used 1)
+  - Add water or oil (which they didn't pre-add to inventory)
+  Without confirmation, accidental deductions would be frustrating. With it, user catches mistakes
+- **Session expiry needs clear plan**: If user closes browser after start() but before complete(), session is lost in MVP. Need clear messaging: "Session expired. Add items and try again." For Phase 1, persist sessions with 24-hour expiry
+- **Recipe adaptation is better than failure**: If user has 1 tomato but recipe expects 3, LLM should try to adapt recipe (not suggest "add more tomatoes"). This respects inventory constraints
+
+### Key insight for AI PMs
+
+- **Recoverability principle matters most at data mutation points**: Meal suggestions can be wrong and user just ignores them. But inventory deduction is irreversible (marks item used). That's why confirmation dialog is essential - it's not just polish, it's critical UX
+- **Confidence tracking enables better UX without being paternalistic**: We don't prevent deductions of approximate items. We just flag them: "You said 'some rice'. About to use estimated quantity. OK?" User stays in control but sees uncertainty
+- **LLM validation must be defensive**: generateRecipeDetail doesn't trust the LLM output. It post-validates every ingredient against inventory. This catches hallucinations before they reach the user
+- **In-memory session storage works for MVP but has clear limits**: If we deploy with load balancing, different requests might hit different servers and lose session state. Clear future plan: persist cooking_sessions to DB in Phase 1
+- **Atomic deduction is harder than it looks**: Deduct all-or-nothing? Or deduct as much as succeeds? Decided on best-effort: deduct what we can, report partial success. Prevents single failure from blocking whole operation
+
+### Technical decisions made
+
+1. **Two-step cooking flow**: POST /start returns session_id + ingredients_to_deduct. POST /complete uses session_id to deduct. Enables confirmation UX without extra API call
+2. **In-memory sessions for MVP**: `cookingSessions: Record<string, any> = {}` maps session_id to { recipe, inventory_before, ingredients_to_deduct, started_at }. Simple, works. Phase 1 adds DB persistence
+3. **Confidence in ingredients_to_deduct**: Each ingredient includes confidence field. Frontend renders warning for approximate items. No paternalism - user can still proceed
+4. **Soft-delete for deduction**: UPDATE inventory_items SET date_used = now() instead of DELETE. Preserves audit trail for analytics, meal pattern learning, recovery if needed
+5. **Post-validation of recipe**: After LLM generates recipe, validate every ingredient exists in inventory. Throw error if not found. Prevents hallucination from reaching user
+6. **Ingredient matching by canonical_name**: Recipe says "chicken", inventory has "chicken breast" → match via canonical_name. Handles variations gracefully
+7. **Session cleanup**: After complete(), delete from cookingSessions. For production, implement cleanup job: delete where started_at < now() - interval '24 hours'
+8. **Error messages for clarity**: "Cooking session not found" vs "Deduction failed" vs "Insufficient quantity". Each guides user to next action
+
+### What's next
+
+**To complete Task 4**:
+1. ✓ Implement cooking.ts endpoints
+2. ✓ Create comprehensive test suite
+3. ✓ Design confirmation UX (two-step flow)
+4. Add integration tests with actual HTTP calls
+5. Test with real OpenAI API calls (generateRecipeDetail)
+6. Run full cooking flow: inventory → start → confirm → complete → verify deduction
+
+**Phase 1 enhancements**:
+1. Add cooking_sessions table for session persistence
+2. Implement session expiry cleanup job
+3. Add cooking_history table (which recipes cooked when) for analytics
+4. Implement recipe modification mid-cooking (user says "add spinach" → LLM adapts)
+5. Add spending tracking (estimate cost of meal based on ingredients)
+
+**Learning to document**:
+- How confidence tracking improves UX without being restrictive
+- Why two-step flow (start + complete) is better than one-step deduction
+- How post-validation prevents LLM hallucinations
+- Trade-offs in session storage (in-memory vs DB vs localStorage)
+- Why atomic deduction is less important than reporting partial success
+
+### UX Decision: Confirmation Before Deduction
+
+**Decision:** Implement two-step flow where user confirms before any inventory changes.
+
+**Why:** 
+1. **Recoverability** - User can catch mistakes before data changes
+2. **Respect uncertainty** - Approximate items flagged so user knows what they're unsure about
+3. **Actual kitchen behavior** - People think as they cook ("Wait, did I use all the tomatoes?")
+4. **No penalties for caution** - Extra confirmation is cheaper than undoing wrong deduction
+
+**Flow:**
+```
+POST /api/cooking/start → returns ingredients_to_deduct
+    ↓
+Frontend shows dialog: "About to deduct: X chicken, Y tomato, Z basil. Continue?"
+    ↓
+User confirms or cancels
+    ↓
+If confirmed: POST /api/cooking/complete → actually deducts
+```
+
+**Example UX:**
+```
+Cooking: Tomato Basil Chicken
+                
+When done, confirm what you used:
+├─ 2 chicken (pieces) - exact
+├─ 3 tomato (pieces) - exact  
+└─ 5 basil (leaves) - exact
+
+[✓ Confirm] [Cancel]
+```
+
+If any item was approximate:
+```
+├─ 2 rice (cups) - ⚠️ approximate
+│  (You said "some rice" - using best estimate)
+└─ [✓ Confirm] [Cancel]
+```
+
+### Code Quality Notes
+
+- All endpoints have clear docstrings with request/response examples
+- Error messages are specific and actionable ("Cooking session not found" vs generic error)
+- Type safety throughout: using TypeScript interfaces for all API contracts
+- Separation of concerns: API routes vs DB logic vs LLM utilities remain separate
+- Testing approach covers happy path + 8 edge cases
+- Comments explain "why" (design decisions) not just "what" (code structure)
+
+### Edge Cases Discovered
+
+1. **Approximate ingredients need explicit warning**: Can't just track confidence, must show in UX
+2. **Partial deduction should report success**: Some items deduct, some fail → report which succeeded
+3. **Session expiry needs messaging**: If session lost, user needs clear guidance to retry
+4. **Insufficient quantity handling**: LLM should adapt recipe, not fail. But if adaptation impossible, error early
+5. **Confidence tracking is metadata, not control**: Approximate items aren't blocked, just flagged

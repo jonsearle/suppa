@@ -165,3 +165,97 @@ CREATE INDEX idx_chat_user_time ON chat_messages(user_id, timestamp);
 - Chat history is append-only: messages are never modified
 - Currently all queries filter by a single `USER_ID` hardcoded in the backend (for MVP testing)
 - Future: implement Row-Level Security (RLS) policies to enforce user isolation at database level
+
+---
+
+## Cooking Flow Example
+
+End-to-end example of the cooking flow:
+
+### Setup: User's Inventory
+
+User has in inventory:
+- 2 chicken breasts (exact)
+- 3 tomatoes (exact)
+- 1 bunch basil (exact)
+
+### Step 1: Start Cooking
+
+Frontend calls: `POST /api/cooking/start` with:
+```json
+{
+  "recipe_name": "Tomato Basil Chicken",
+  "recipe_description": "Pan-seared chicken with fresh tomatoes and basil. Light and fresh.",
+  "recipe_time_mins": 25
+}
+```
+
+Backend:
+1. Gets current inventory
+2. Calls `generateRecipeDetail()` with user's available items
+3. LLM returns recipe with ingredients: chicken x2, tomato x3, basil leaves
+4. Maps to inventory items for deduction tracking
+5. Creates session with `session_id`
+
+Response includes `ingredients_to_deduct` list for confirmation.
+
+### Step 2: Confirmation Dialog
+
+Frontend shows:
+```
+About to deduct from inventory:
+- 2 chicken (pieces)
+- 3 tomato (pieces)  
+- 5 basil (leaves)
+
+[Confirm Cooking Done] [Cancel]
+```
+
+This honors the recoverability principle from Learning Objectives:
+User reviews before inventory changes. Can cancel if they made different dish.
+
+### Step 3: Complete Cooking
+
+User confirms. Frontend calls: `POST /api/cooking/complete`
+
+Backend updates inventory:
+```sql
+UPDATE inventory_items SET date_used = now() WHERE id = <item_id>;
+```
+
+All 3 items marked as used. Next getInventory() call returns empty list.
+
+### Step 4: Feedback Loop
+
+With inventory empty, next meal suggestions are different.
+System learns what user cooks and when.
+
+---
+
+## Edge Cases Handled
+
+1. **Insufficient quantity:** Recipe needs 3 tomatoes, user has 1
+   - generateRecipeDetail adapts recipe or returns error
+   - User sees why deduction will be partial
+
+2. **Approximate confidence:** User added "some rice"
+   - ingredients_to_deduct shows confidence: 'approximate'
+   - Frontend warns: "Rice quantity is approximate. Review?"
+
+3. **Browser closes mid-cooking:** Session expires after 24 hours
+   - MVP: Session lost in memory, user starts over
+   - Phase 1: Persist session to DB for recovery
+
+4. **Invalid ingredient:** LLM suggests salt (not in inventory)
+   - generateRecipeDetail post-validates every ingredient
+   - Throws error if validation fails
+   - Never returns recipe with unavailable items
+
+---
+
+## Implementation Notes
+
+- Cooking sessions stored in-memory for MVP (see backend/netlify/functions/api/cooking.ts)
+- Phase 1 will add cooking_sessions table for persistence across server restarts
+- Two-step flow (start → complete) enables confirmation UX for recoverability
+- Confidence tracking on ingredients helps users make better decisions about approximate quantities
