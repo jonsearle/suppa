@@ -1,32 +1,60 @@
 /**
- * Supabase database helper functions
+ * PocketBase database helper functions
  * Handles all database operations for inventory and chat history
+ * Uses PocketBase REST API instead of Supabase SDK
  */
 
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { InventoryItem, ChatMessage } from '../../../shared/types';
-
-let supabaseClient: SupabaseClient | null = null;
+import { InventoryItem, ChatMessage } from '../../shared/types';
 
 /**
- * Get or create Supabase client
- * Uses SUPABASE_URL and SUPABASE_ANON_KEY from environment
+ * Get PocketBase URL from environment
+ * Must be set to local (http://localhost:8090) or deployment URL
  */
-function getSupabaseClient(): SupabaseClient {
-  if (!supabaseClient) {
-    const url = process.env.SUPABASE_URL;
-    const key = process.env.SUPABASE_ANON_KEY;
+function getPocketBaseUrl(): string {
+  const url = process.env.POCKETBASE_URL;
+  if (!url) {
+    throw new Error('POCKETBASE_URL must be set in environment');
+  }
+  return url.replace(/\/$/, ''); // Remove trailing slash if present
+}
 
-    if (!url || !key) {
+/**
+ * Helper to make authenticated fetch requests to PocketBase API
+ * PocketBase REST API base: /api/collections/{collection}/records
+ */
+async function pocketbaseFetch(
+  path: string,
+  options: RequestInit & { method?: string } = {}
+): Promise<any> {
+  const url = `${getPocketBaseUrl()}/api${path}`;
+  const method = options.method || 'GET';
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+
+    if (!response.ok) {
+      const errorData = (await response.json().catch(() => ({}))) as any;
       throw new Error(
-        'SUPABASE_URL and SUPABASE_ANON_KEY must be set in environment'
+        `PocketBase request failed (${response.status}): ${
+          errorData.message || response.statusText
+        }`
       );
     }
 
-    supabaseClient = createClient(url, key);
+    return await response.json();
+  } catch (error) {
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error(`PocketBase request failed: ${String(error)}`);
   }
-
-  return supabaseClient;
 }
 
 /**
@@ -44,23 +72,23 @@ function getUserId(): string {
 /**
  * Fetch all active inventory items for the current user
  * Returns items where date_used IS NULL (not yet consumed)
+ * PocketBase filter syntax: ?filter=(field="value"&&field2=null)
  */
 export async function getInventory(): Promise<InventoryItem[]> {
-  const client = getSupabaseClient();
   const userId = getUserId();
 
-  const { data, error } = await client
-    .from('inventory_items')
-    .select('*')
-    .eq('user_id', userId)
-    .is('date_used', null)
-    .order('date_added', { ascending: false });
+  // PocketBase filter: user_id matches AND date_used is null
+  // Sort by date_added descending (most recent first)
+  const filter = encodeURIComponent(`(user_id="${userId}"&&date_used=null)`);
+  const sort = encodeURIComponent('-date_added');
 
-  if (error) {
-    throw new Error(`Failed to fetch inventory: ${error.message}`);
-  }
+  const response = await pocketbaseFetch(
+    `/collections/inventory_items/records?filter=${filter}&sort=${sort}`
+  );
 
-  return data || [];
+  // PocketBase returns { items: [...] } or just array depending on version
+  const items = response.items || (Array.isArray(response) ? response : []);
+  return items as InventoryItem[];
 }
 
 /**
@@ -72,51 +100,56 @@ export async function getInventory(): Promise<InventoryItem[]> {
 export async function addInventoryItem(
   item: Omit<InventoryItem, 'id' | 'user_id' | 'date_added' | 'date_used'>
 ): Promise<InventoryItem> {
-  const client = getSupabaseClient();
   const userId = getUserId();
   const { getCanonicalName } = await import('./canonical-foods');
 
   const canonicalName = item.canonical_name || getCanonicalName(item.name);
 
   // Check if item with same canonical_name already exists for this user
-  const { data: existing, error: checkError } = await client
-    .from('inventory_items')
-    .select('*')
-    .eq('user_id', userId)
-    .eq('canonical_name', canonicalName)
-    .is('date_used', null)
-    .single();
+  // PocketBase filter: user_id matches AND canonical_name matches AND date_used is null
+  const filter = encodeURIComponent(
+    `(user_id="${userId}"&&canonical_name="${canonicalName}"&&date_used=null)`
+  );
 
-  if (checkError && checkError.code !== 'PGRST116') {
-    // PGRST116 = no rows found, which is expected
-    throw checkError;
-  }
+  const existingResponse = await pocketbaseFetch(
+    `/collections/inventory_items/records?filter=${filter}&limit=1`
+  );
+
+  const existingItems = existingResponse.items || (Array.isArray(existingResponse) ? existingResponse : []);
+  const existing = existingItems[0];
 
   if (existing) {
     // Merge: update quantity and unit, keep most recent name
-    const { data, error } = await client
-      .from('inventory_items')
-      .update({
-        name: item.name || existing.name,
-        quantity_approx: item.quantity_approx !== undefined ? item.quantity_approx : existing.quantity_approx,
-        unit: item.unit || existing.unit,
-        confidence: item.confidence || existing.confidence,
-        has_item: item.has_item !== undefined ? item.has_item : existing.has_item,
-        date_added: new Date().toISOString(),
-      })
-      .eq('id', existing.id)
-      .select()
-      .single();
+    // PocketBase PATCH: /api/collections/{collection}/records/{id}
+    const updatedItem = await pocketbaseFetch(
+      `/collections/inventory_items/records/${existing.id}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: item.name || existing.name,
+          quantity_approx:
+            item.quantity_approx !== undefined
+              ? item.quantity_approx
+              : existing.quantity_approx,
+          unit: item.unit || existing.unit,
+          confidence: item.confidence || existing.confidence,
+          has_item:
+            item.has_item !== undefined ? item.has_item : existing.has_item,
+          date_added: new Date().toISOString(),
+        }),
+      }
+    );
 
-    if (error) throw error;
-    return data as InventoryItem;
+    return updatedItem as InventoryItem;
   }
 
   // No existing item: create new
-  const { data, error } = await client
-    .from('inventory_items')
-    .insert([
-      {
+  // PocketBase POST: /api/collections/{collection}/records
+  const newItem = await pocketbaseFetch(
+    `/collections/inventory_items/records`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
         user_id: userId,
         name: item.name,
         canonical_name: canonicalName,
@@ -124,13 +157,11 @@ export async function addInventoryItem(
         quantity_approx: item.quantity_approx || null,
         unit: item.unit || null,
         confidence: item.confidence || 'approximate',
-      },
-    ])
-    .select()
-    .single();
+      }),
+    }
+  );
 
-  if (error) throw error;
-  return data as InventoryItem;
+  return newItem as InventoryItem;
 }
 
 /**
@@ -139,22 +170,127 @@ export async function addInventoryItem(
  * This preserves audit trail
  */
 export async function deductInventory(itemId: string): Promise<InventoryItem> {
-  const client = getSupabaseClient();
+  // PocketBase PATCH: /api/collections/{collection}/records/{id}
+  const updatedItem = await pocketbaseFetch(
+    `/collections/inventory_items/records/${itemId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        date_used: new Date().toISOString(),
+      }),
+    }
+  );
 
-  const { data, error } = await client
-    .from('inventory_items')
-    .update({
-      date_used: new Date().toISOString(),
-    })
-    .eq('id', itemId)
-    .select()
-    .single();
+  return updatedItem as InventoryItem;
+}
 
-  if (error) {
-    throw new Error(`Failed to deduct inventory: ${error.message}`);
+/**
+ * Deduct a specific quantity from an inventory item (TASK 8: Fix)
+ * Handles partial deductions properly:
+ * - If item is boolean (has_item=true): Mark entire item as used
+ * - If deducting exact amount: Mark item as used
+ * - If deducting partial amount: Create new item with remainder, mark original as used
+ * - If insufficient quantity: Throw error (prevent deduction)
+ *
+ * Returns { deducted_item, remainder_item_id } where remainder is null if fully consumed
+ */
+export async function deductInventoryQuantity(
+  itemId: string,
+  quantityToDeduct?: number
+): Promise<{ deducted_item: InventoryItem; remainder_item_id?: string }> {
+  const userId = getUserId();
+
+  // Fetch the item to check quantity
+  // PocketBase GET: /api/collections/{collection}/records/{id}
+  const item = await pocketbaseFetch(
+    `/collections/inventory_items/records/${itemId}`
+  );
+
+  // Boolean items (salt, spices, oils): just mark as used, no quantity check
+  if (item.has_item === true && quantityToDeduct === undefined) {
+    const deductedItem = await pocketbaseFetch(
+      `/collections/inventory_items/records/${itemId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ date_used: new Date().toISOString() }),
+      }
+    );
+
+    return { deducted_item: deductedItem as InventoryItem };
   }
 
-  return data as InventoryItem;
+  // Quantity-based items: check if sufficient quantity exists
+  if (quantityToDeduct !== undefined && item.quantity_approx !== null) {
+    const available = item.quantity_approx;
+
+    // CRITICAL FIX: Block deduction if insufficient quantity
+    if (available < quantityToDeduct) {
+      throw new Error(
+        `Insufficient quantity: need ${quantityToDeduct} ${item.unit || 'units'}, ` +
+          `have ${available}. User must review recipe or add more inventory.`
+      );
+    }
+
+    // Exact match or very close: mark entire item as used
+    if (Math.abs(available - quantityToDeduct) < 0.01) {
+      const deductedItem = await pocketbaseFetch(
+        `/collections/inventory_items/records/${itemId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ date_used: new Date().toISOString() }),
+        }
+      );
+
+      return { deducted_item: deductedItem as InventoryItem };
+    }
+
+    // Partial deduction: create remainder item, mark original as used
+    const remainder = available - quantityToDeduct;
+
+    // Create new item for remainder
+    // PocketBase POST: /api/collections/{collection}/records
+    const remainderItem = await pocketbaseFetch(
+      `/collections/inventory_items/records`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          user_id: userId,
+          name: item.name,
+          canonical_name: item.canonical_name,
+          quantity_approx: remainder,
+          unit: item.unit,
+          confidence: item.confidence,
+          has_item: false,
+          date_added: new Date().toISOString(),
+        }),
+      }
+    );
+
+    // Mark original as used
+    const deductedItem = await pocketbaseFetch(
+      `/collections/inventory_items/records/${itemId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ date_used: new Date().toISOString() }),
+      }
+    );
+
+    return {
+      deducted_item: deductedItem as InventoryItem,
+      remainder_item_id: remainderItem.id,
+    };
+  }
+
+  // No quantity specified and no quantity in item: just mark as used
+  const deductedItem = await pocketbaseFetch(
+    `/collections/inventory_items/records/${itemId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ date_used: new Date().toISOString() }),
+    }
+  );
+
+  return { deducted_item: deductedItem as InventoryItem };
 }
 
 /**
@@ -162,21 +298,20 @@ export async function deductInventory(itemId: string): Promise<InventoryItem> {
  * Returns messages in chronological order (oldest first)
  */
 export async function getChatHistory(limit: number = 20): Promise<ChatMessage[]> {
-  const client = getSupabaseClient();
   const userId = getUserId();
 
-  const { data, error } = await client
-    .from('chat_messages')
-    .select('*')
-    .eq('user_id', userId)
-    .order('timestamp', { ascending: true })
-    .limit(limit);
+  // PocketBase filter: user_id matches
+  // Sort by timestamp ascending (oldest first)
+  const filter = encodeURIComponent(`(user_id="${userId}")`);
+  const sort = encodeURIComponent('timestamp');
 
-  if (error) {
-    throw new Error(`Failed to fetch chat history: ${error.message}`);
-  }
+  const response = await pocketbaseFetch(
+    `/collections/chat_messages/records?filter=${filter}&sort=${sort}&limit=${limit}`
+  );
 
-  return data || [];
+  // PocketBase returns { items: [...] } or array depending on version
+  const messages = response.items || (Array.isArray(response) ? response : []);
+  return messages as ChatMessage[];
 }
 
 /**
@@ -188,23 +323,21 @@ export async function addChatMessage(
   message: string,
   role: 'user' | 'assistant'
 ): Promise<ChatMessage> {
-  const client = getSupabaseClient();
   const userId = getUserId();
 
-  const { data, error } = await client
-    .from('chat_messages')
-    .insert({
-      user_id: userId,
-      message,
-      role,
-      timestamp: new Date().toISOString(),
-    })
-    .select()
-    .single();
+  // PocketBase POST: /api/collections/{collection}/records
+  const newMessage = await pocketbaseFetch(
+    `/collections/chat_messages/records`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: userId,
+        message,
+        role,
+        timestamp: new Date().toISOString(),
+      }),
+    }
+  );
 
-  if (error) {
-    throw new Error(`Failed to add chat message: ${error.message}`);
-  }
-
-  return data as ChatMessage;
+  return newMessage as ChatMessage;
 }

@@ -154,21 +154,37 @@ export async function startCooking(
 
 /**
  * Complete cooking and deduct ingredients from inventory
+ * TASK 8 FIX: Returns detailed deduction results instead of void
  * @throws ApiError on network or server errors
  */
 export async function completeCooking(
   sessionId: string,
   recipeName: string,
   ingredientsUsed: Array<{ inventory_item_id: string; quantity: number }>
-): Promise<void> {
-  await fetchWithErrorHandling('/api/cooking/complete', {
+): Promise<{
+  recipeName: string;
+  deductedItems: Array<{
+    inventory_item_id: string;
+    quantity: number;
+    unit: string;
+    success: boolean;
+    reason?: string;
+    error_type?: 'insufficient_quantity' | 'system_error';
+  }>;
+  inventoryAfter: InventoryItem[];
+}> {
+  const data = await fetchWithErrorHandling('/api/cooking/complete', {
     method: 'POST',
     body: JSON.stringify({
       session_id: sessionId,
-      recipe_name: recipeName,
-      ingredients_used: ingredientsUsed,
+      deduction_confirmed: true,
     }),
   });
+  return {
+    recipeName: data.data.recipe_name,
+    deductedItems: data.data.deducted_items || [],
+    inventoryAfter: data.data.inventory_after || [],
+  };
 }
 
 export { ApiError };

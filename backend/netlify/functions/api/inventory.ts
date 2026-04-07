@@ -8,7 +8,7 @@
 import { Router, Request, Response } from 'express';
 import { parseInventoryInput } from './utils/prompts';
 import { getInventory, addInventoryItem } from './utils/db';
-import { InventoryItem } from '../../shared/types';
+import { InventoryItem } from '../shared/types';
 
 const router = Router();
 
