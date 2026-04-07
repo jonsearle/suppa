@@ -3,7 +3,7 @@
  * Runs on Netlify Functions
  */
 
-import type { Handler } from '@netlify/functions';
+import type { Handler, HandlerEvent, HandlerContext, HandlerResponse } from '@netlify/functions';
 import express, { Express, Request, Response, NextFunction } from 'express';
 import 'dotenv/config';
 import inventoryRouter from './api/inventory';
@@ -50,78 +50,116 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 });
 
 // Netlify Functions handler
-const handler: Handler = async (event, context) => {
-  return new Promise((resolve) => {
-    // Mock request/response objects that work with Express
-    const mockReq: any = {
-      method: event.httpMethod,
-      url: event.path,
-      headers: event.headers,
-      body: event.body ? JSON.parse(event.body) : {},
-      query: event.queryStringParameters || {},
-    };
+const handler: Handler = async (event: HandlerEvent, context: HandlerContext): Promise<HandlerResponse> => {
+  try {
+    return await new Promise((resolve, reject) => {
+      // Mock request/response objects that work with Express
+      const mockReq: any = {
+        method: event.httpMethod,
+        url: event.path,
+        headers: event.headers,
+        body: event.body ? JSON.parse(event.body) : {},
+        query: event.queryStringParameters || {},
+      };
 
-    const mockRes: any = {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: null,
-      
-      status(code: number) {
-        this.statusCode = code;
-        return this;
-      },
-      
-      header(name: string, value: string) {
-        this.headers[name] = value;
-        return this;
-      },
-      
-      json(data: any) {
-        this.body = JSON.stringify(data);
-        resolve({
-          statusCode: this.statusCode,
-          headers: this.headers,
-          body: this.body,
-        });
-      },
-      
-      send(data: any) {
-        this.body = typeof data === 'string' ? data : JSON.stringify(data);
-        resolve({
-          statusCode: this.statusCode,
-          headers: this.headers,
-          body: this.body,
-        });
-      },
-      
-      sendStatus(code: number) {
-        this.statusCode = code;
-        resolve({
-          statusCode: this.statusCode,
-          headers: this.headers,
-          body: '',
-        });
-      },
-    };
+      const mockRes: any = {
+        statusCode: 200,
+        headers: { 'Content-Type': 'application/json' },
+        body: null,
+        resolved: false,
+        
+        status(code: number) {
+          this.statusCode = code;
+          return this;
+        },
+        
+        header(name: string, value: string) {
+          this.headers[name] = value;
+          return this;
+        },
+        
+        json(data: any) {
+          if (!this.resolved) {
+            this.resolved = true;
+            this.body = JSON.stringify(data);
+            resolve({
+              statusCode: this.statusCode,
+              headers: this.headers,
+              body: this.body,
+            });
+          }
+        },
+        
+        send(data: any) {
+          if (!this.resolved) {
+            this.resolved = true;
+            this.body = typeof data === 'string' ? data : JSON.stringify(data);
+            resolve({
+              statusCode: this.statusCode,
+              headers: this.headers,
+              body: this.body,
+            });
+          }
+        },
+        
+        sendStatus(code: number) {
+          if (!this.resolved) {
+            this.resolved = true;
+            this.statusCode = code;
+            resolve({
+              statusCode: this.statusCode,
+              headers: this.headers,
+              body: '',
+            });
+          }
+        },
+      };
 
-    // Add Express-like methods
-    Object.setPrototypeOf(mockReq, Object.getPrototypeOf({}));
-    Object.setPrototypeOf(mockRes, Object.getPrototypeOf({}));
+      // Add Express-like methods
+      Object.setPrototypeOf(mockReq, Object.getPrototypeOf({}));
+      Object.setPrototypeOf(mockRes, Object.getPrototypeOf({}));
 
-    // Call the Express app
-    app(mockReq, mockRes);
+      // Set timeout to ensure we always resolve
+      const timeout = setTimeout(() => {
+        if (!mockRes.resolved) {
+          mockRes.resolved = true;
+          resolve({
+            statusCode: 500,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ error: 'Request timeout' }),
+          });
+        }
+      }, 10000);
 
-    // Fallback timeout
-    setTimeout(() => {
-      if (mockRes.body === null) {
-        resolve({
-          statusCode: 500,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ error: 'Request timeout' }),
-        });
+      try {
+        // Call the Express app
+        app(mockReq, mockRes);
+      } catch (appError) {
+        clearTimeout(timeout);
+        if (!mockRes.resolved) {
+          mockRes.resolved = true;
+          resolve({
+            statusCode: 500,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              error: 'Internal server error',
+              message: appError instanceof Error ? appError.message : String(appError),
+            }),
+          });
+        }
       }
-    }, 10000);
-  });
+    });
+  } catch (error) {
+    console.error('Handler error:', error);
+    return {
+      statusCode: 500,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        error: 'Internal server error',
+        message: error instanceof Error ? error.message : String(error),
+      }),
+    };
+  }
 };
 
 export { handler };
