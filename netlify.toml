@@ -4,7 +4,7 @@
   functions = "backend/netlify/functions"
 
 [build.environment]
-  POCKETBASE_URL = "https://your-pocketbase-railway-url.up.railway.app"
+  POCKETBASE_URL = "https://suppa-pocketbase-production.up.railway.app"
   USER_ID = "prod_user"
   OPENAI_API_KEY = ""
 

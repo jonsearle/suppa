@@ -11,7 +11,16 @@ import type {
   MealSuggestions,
 } from '../types';
 
+// Use environment variable or default to local dev server
+// In production (Netlify), use relative URLs which route to /.netlify/functions/api via redirects
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8888';
+const getBaseURL = () => {
+  // In production on Netlify, use relative URLs to leverage netlify.toml redirects
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    return '';
+  }
+  return API_URL;
+};
 
 class ApiError extends Error {
   constructor(
@@ -32,7 +41,8 @@ async function fetchWithErrorHandling(
   options: RequestInit
 ): Promise<any> {
   try {
-    const response = await fetch(`${API_URL}${endpoint}`, {
+    const baseURL = getBaseURL();
+    const response = await fetch(`${baseURL}${endpoint}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
