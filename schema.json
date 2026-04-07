@@ -1,0 +1,104 @@
+{
+  "collections": [
+    {
+      "name": "inventory",
+      "type": "base",
+      "system": false,
+      "fields": [
+        {
+          "id": "cbez_b1i",
+          "name": "user_id",
+          "type": "text",
+          "required": true,
+          "unique": false
+        },
+        {
+          "id": "fmnhx_c2j",
+          "name": "name",
+          "type": "text",
+          "required": true,
+          "unique": false
+        },
+        {
+          "id": "k3lmn_d4k",
+          "name": "canonical_name",
+          "type": "text",
+          "required": false,
+          "unique": false
+        },
+        {
+          "id": "p5qrs_e6l",
+          "name": "quantity_approx",
+          "type": "number",
+          "required": false,
+          "unique": false
+        },
+        {
+          "id": "t7uvw_f8m",
+          "name": "unit",
+          "type": "text",
+          "required": false,
+          "unique": false
+        },
+        {
+          "id": "x9yz1_g0n",
+          "name": "confidence",
+          "type": "select",
+          "required": true,
+          "values": ["exact", "approximate"],
+          "unique": false
+        },
+        {
+          "id": "b2cde_h1o",
+          "name": "date_added",
+          "type": "date",
+          "required": true,
+          "unique": false
+        },
+        {
+          "id": "f4ghi_i2p",
+          "name": "date_used",
+          "type": "date",
+          "required": false,
+          "unique": false
+        }
+      ]
+    },
+    {
+      "name": "chat_messages",
+      "type": "base",
+      "system": false,
+      "fields": [
+        {
+          "id": "jklmn_j3q",
+          "name": "user_id",
+          "type": "text",
+          "required": true,
+          "unique": false
+        },
+        {
+          "id": "nopqr_k4r",
+          "name": "message",
+          "type": "text",
+          "required": true,
+          "unique": false
+        },
+        {
+          "id": "stuvw_l5s",
+          "name": "role",
+          "type": "select",
+          "required": true,
+          "values": ["user", "assistant"],
+          "unique": false
+        },
+        {
+          "id": "xyzab_m6t",
+          "name": "timestamp",
+          "type": "date",
+          "required": true,
+          "unique": false
+        }
+      ]
+    }
+  ]
+}
