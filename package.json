@@ -4,8 +4,8 @@
   "description": "Suppa - Conversational AI meal discovery MVP",
   "private": true,
   "scripts": {
-    "setup:db": "ts-node scripts/setup-db.ts",
-    "setup:db:prod": "POCKETBASE_URL=https://suppa-pocketbase-production.up.railway.app POCKETBASE_ADMIN_EMAIL=jon.searle@gmail.com POCKETBASE_ADMIN_PASSWORD=SK8Ztxn4aERA7Ey ts-node scripts/setup-db.ts",
+    "setup:db": "node scripts/setup-db.js",
+    "setup:db:prod": "POCKETBASE_URL=https://suppa-pocketbase-production.up.railway.app POCKETBASE_ADMIN_EMAIL=jon.searle@gmail.com POCKETBASE_ADMIN_PASSWORD=SK8Ztxn4aERA7Ey node scripts/setup-db.js",
     "setup": "npm run setup:db",
     "dev": "netlify dev",
     "build": "cd backend && npm run build && cd ../frontend && npm run build"
