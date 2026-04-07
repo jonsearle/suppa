@@ -55,11 +55,6 @@ export interface MealSuggestions {
   recipes: Recipe[];
 }
 
-export interface CookingState {
-  recipe: RecipeDetail;
-  inventory_before: InventoryItem[];
-}
-
 // ============================================================================
 // API Request/Response Types
 // ============================================================================
