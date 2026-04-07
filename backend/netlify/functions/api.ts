@@ -73,6 +73,11 @@ const handler: Handler = async (event: HandlerEvent, context: HandlerContext): P
           return this;
         },
         
+        setHeader(name: string, value: string) {
+          this.headers[name] = value;
+          return this;
+        },
+        
         header(name: string, value: string) {
           this.headers[name] = value;
           return this;
