@@ -197,5 +197,7 @@ export async function completeCooking(
   };
 }
 
+const api = { addInventory, getInventory, suggestMeals, getRecipeDetail, startCooking, completeCooking };
+
 export { ApiError };
-export default { addInventory, getInventory, suggestMeals, getRecipeDetail, startCooking, completeCooking };
+export default api;

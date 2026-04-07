@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { addInventory, getInventory } from '../services/api';
-import type { InventoryItem, ApiError } from '../types';
+import type { InventoryItem } from '../types';
 
 interface InventoryFormProps {
   onInventoryUpdate?: (items: InventoryItem[]) => void;
@@ -13,12 +13,7 @@ export const InventoryForm: React.FC<InventoryFormProps> = ({ onInventoryUpdate 
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Load initial inventory on mount
-  useEffect(() => {
-    loadInventory();
-  }, []);
-
-  const loadInventory = async () => {
+  const loadInventory = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -32,7 +27,12 @@ export const InventoryForm: React.FC<InventoryFormProps> = ({ onInventoryUpdate 
     } finally {
       setLoading(false);
     }
-  };
+  }, [onInventoryUpdate]);
+
+  // Load initial inventory on mount
+  useEffect(() => {
+    loadInventory();
+  }, [loadInventory]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,7 +45,7 @@ export const InventoryForm: React.FC<InventoryFormProps> = ({ onInventoryUpdate 
     try {
       setSubmitting(true);
       setError(null);
-      const newItems = await addInventory(input);
+      await addInventory(input);
       setInput('');
       // Reload full inventory after adding items
       await loadInventory();

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import type { Recipe, RecipeDetail as RecipeDetailType } from '../types';
 import { getRecipeDetail, startCooking } from '../services/api';
 
@@ -18,12 +18,7 @@ export const RecipeDetail: React.FC<RecipeDetailProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
-  // Load recipe details on mount
-  React.useEffect(() => {
-    loadRecipeDetail();
-  }, [recipe.name]);
-
-  const loadRecipeDetail = async () => {
+  const loadRecipeDetail = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -36,7 +31,12 @@ export const RecipeDetail: React.FC<RecipeDetailProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [recipe]);
+
+  // Load recipe details on mount
+  useEffect(() => {
+    loadRecipeDetail();
+  }, [loadRecipeDetail]);
 
   const handleStartCooking = async () => {
     if (!detail) return;

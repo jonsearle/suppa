@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { Recipe, RecipeDetail, InventoryItem } from './types';
+import type { Recipe, InventoryItem } from './types';
 import { InventoryForm } from './components/InventoryForm';
 import { Chat } from './components/Chat';
 import { RecipeDetail as RecipeDetailComponent } from './components/RecipeDetail';
