@@ -165,6 +165,28 @@ export async function addInventoryItem(
 }
 
 /**
+ * Mark all active inventory items as used for the current user.
+ * This is compatible with the current PocketBase permissions and
+ * clears the active inventory list for local testing.
+ */
+export async function clearInventory(): Promise<number> {
+  const items = await getInventory();
+
+  await Promise.all(
+    items.map((item) =>
+      pocketbaseFetch(`/collections/inventory_items/records/${item.id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          date_used: new Date().toISOString(),
+        }),
+      })
+    )
+  );
+
+  return items.length;
+}
+
+/**
  * Mark an inventory item as used (soft delete)
  * Sets date_used to current timestamp instead of actually deleting the row
  * This preserves audit trail

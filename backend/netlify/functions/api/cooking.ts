@@ -4,10 +4,11 @@
  * POST /api/cooking/start: Takes recipe details, generates full recipe with ingredients, saves cooking state
  * POST /api/cooking/complete: User confirms deduction, deducts ingredients from inventory
  * POST /api/cooking/confirm-deduction: Get list of what will be deducted before user confirms
+ * POST /api/cooking/confirm-adjustments: Task 7 - Parse and apply user recipe adjustments before cooking
  */
 
 import { Router, Request, Response } from 'express';
-import { generateRecipeDetail } from './utils/prompts';
+import { generateRecipeDetail, parseRecipeAdjustments, RecipeAdjustment } from './utils/prompts';
 import { getInventory, deductInventoryQuantity } from './utils/db';
 import { RecipeDetail, InventoryItem, StartCookingRequest } from '../shared/types';
 
@@ -376,6 +377,178 @@ router.post('/complete', async (req: Request, res: Response) => {
 
     res.status(400).json({
       error: 'Failed to complete cooking',
+      details: errorMsg,
+    });
+  }
+});
+
+/**
+ * POST /api/cooking/confirm-adjustments
+ * Task 7: Parse and apply user recipe adjustments before cooking
+ *
+ * User provides natural language adjustments to recipe in the cooking confirmation flow.
+ * This endpoint parses those adjustments and updates the recipe accordingly.
+ *
+ * Request body:
+ * {
+ *   "session_id": "cooking-session-uuid",
+ *   "user_input": "I only have 300g flour, milk is gone off, 6 eggs"
+ * }
+ *
+ * Response:
+ * {
+ *   "data": {
+ *     "adjustments": [
+ *       { type: 'quantity', ingredient: 'flour', quantity: 300, unit: 'g', confidence: 'exact' },
+ *       { type: 'removal', ingredient: 'milk', reason: 'gone_off' },
+ *       { type: 'quantity', ingredient: 'eggs', quantity: 6, unit: 'pieces', confidence: 'exact' }
+ *     ],
+ *     "recipe": { updated recipe details },
+ *     "ingredients_to_deduct": [updated deduction list]
+ *   },
+ *   "message": "Adjustments parsed and applied. Ready to cook!"
+ * }
+ */
+router.post('/confirm-adjustments', async (req: Request, res: Response) => {
+  try {
+    const { session_id, user_input } = req.body;
+
+    // Validate input
+    if (!session_id || typeof session_id !== 'string') {
+      return res.status(400).json({
+        error: 'Missing or invalid session_id field',
+        details: 'session_id must be a string',
+      });
+    }
+
+    if (!user_input || typeof user_input !== 'string') {
+      return res.status(400).json({
+        error: 'Missing or invalid user_input field',
+        details: 'user_input must be a non-empty string',
+      });
+    }
+
+    // Look up cooking session
+    const session = cookingSessions[session_id];
+    if (!session) {
+      return res.status(404).json({
+        error: 'Cooking session not found',
+        details: `Session ${session_id} does not exist or has expired`,
+      });
+    }
+
+    // Parse user adjustments using LLM
+    const adjustments = await parseRecipeAdjustments(user_input, {
+      ingredients: session.recipe.ingredients,
+    });
+
+    // Apply adjustments to recipe
+    let updatedRecipe = { ...session.recipe };
+    let updatedIngredients = [...updatedRecipe.ingredients];
+
+    for (const adjustment of adjustments) {
+      if (adjustment.type === 'quantity') {
+        // Update ingredient quantity
+        const ingredientIndex = updatedIngredients.findIndex(
+          (ing) => ing.name.toLowerCase() === adjustment.ingredient.toLowerCase()
+        );
+        if (ingredientIndex !== -1) {
+          updatedIngredients[ingredientIndex] = {
+            ...updatedIngredients[ingredientIndex],
+            quantity: adjustment.quantity || updatedIngredients[ingredientIndex].quantity,
+            unit: adjustment.unit || updatedIngredients[ingredientIndex].unit,
+          };
+        }
+      } else if (adjustment.type === 'removal') {
+        // Remove ingredient from recipe
+        updatedIngredients = updatedIngredients.filter(
+          (ing) => ing.name.toLowerCase() !== adjustment.ingredient.toLowerCase()
+        );
+      } else if (adjustment.type === 'substitution') {
+        // Replace ingredient
+        const ingredientIndex = updatedIngredients.findIndex(
+          (ing) => ing.name.toLowerCase() === adjustment.ingredient.toLowerCase()
+        );
+        if (ingredientIndex !== -1) {
+          updatedIngredients[ingredientIndex] = {
+            ...updatedIngredients[ingredientIndex],
+            name: adjustment.substitute_with || updatedIngredients[ingredientIndex].name,
+          };
+        }
+      }
+    }
+
+    // Update recipe with adjusted ingredients
+    updatedRecipe.ingredients = updatedIngredients;
+
+    // Regenerate instructions with adjusted recipe
+    try {
+      const currentInventory = await getInventory();
+      updatedRecipe = await generateRecipeDetail(
+        updatedRecipe.name,
+        updatedRecipe.description,
+        currentInventory
+      );
+      // Preserve the adjusted ingredients in the regenerated recipe
+      updatedRecipe.ingredients = updatedIngredients;
+    } catch (error) {
+      // If regeneration fails, keep the adjusted ingredients
+      console.warn('Could not regenerate recipe instructions:', error);
+      updatedRecipe.ingredients = updatedIngredients;
+    }
+
+    // Map updated recipe ingredients to inventory for deduction
+    const currentInventory = await getInventory();
+    const ingredientsToDeduct = updatedRecipe.ingredients.map((ingredient) => {
+      const inventoryItem = currentInventory.find(
+        (item) =>
+          item.name.toLowerCase() === ingredient.name.toLowerCase() ||
+          item.canonical_name?.toLowerCase() === ingredient.name.toLowerCase()
+      );
+
+      if (!inventoryItem) {
+        throw new Error(
+          `Adjusted recipe ingredient "${ingredient.name}" not found in inventory. ` +
+          `User may have removed it during adjustment.`
+        );
+      }
+
+      return {
+        name: ingredient.name,
+        quantity: typeof ingredient.quantity === 'string' ? parseFloat(ingredient.quantity) : ingredient.quantity,
+        unit: ingredient.unit,
+        inventory_item_id: inventoryItem.id,
+        confidence: inventoryItem.confidence,
+      };
+    });
+
+    // Update session with adjusted recipe
+    session.recipe = updatedRecipe;
+    session.ingredients_to_deduct = ingredientsToDeduct;
+
+    res.status(200).json({
+      data: {
+        session_id,
+        adjustments,
+        recipe: updatedRecipe,
+        ingredients_to_deduct: ingredientsToDeduct,
+      },
+      message: `${adjustments.length} adjustment(s) applied. Ready to cook!`,
+    });
+  } catch (error) {
+    console.error('Error in POST /api/cooking/confirm-adjustments:', error);
+
+    const errorMsg = error instanceof Error ? error.message : String(error);
+
+    if (errorMsg.includes('not found in inventory')) {
+      return res.status(400).json({
+        error: 'Adjusted recipe validation failed',
+        details: errorMsg,
+      });
+    }
+
+    res.status(400).json({
+      error: 'Failed to confirm adjustments',
       details: errorMsg,
     });
   }

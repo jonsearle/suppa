@@ -14,9 +14,9 @@
  * - Error handling for edge cases
  */
 
-import { generateRecipeDetail } from '../netlify/functions/api/utils/prompts';
+import { generateRecipeDetail, parseRecipeAdjustments } from '../netlify/functions/api/utils/prompts';
 import { getInventory, addInventoryItem, deductInventory } from '../netlify/functions/api/utils/db';
-import { InventoryItem } from '../shared/types';
+import { InventoryItem } from '../netlify/functions/shared/types';
 
 describe('Cooking Flow', () => {
   /**
@@ -72,7 +72,7 @@ describe('Cooking Flow', () => {
     expect(recipe.time_estimate_mins).toBeGreaterThan(0);
 
     // Verify ingredients are from inventory
-    const ingredientNames = recipe.ingredients.map((ing) => ing.name.toLowerCase());
+    const ingredientNames = recipe.ingredients.map((ing: any) => ing.name.toLowerCase());
     expect(ingredientNames).toContain('chicken');
     expect(ingredientNames).toContain('tomato');
     expect(ingredientNames).toContain('basil');
@@ -84,7 +84,7 @@ describe('Cooking Flow', () => {
     });
 
     // Verify instructions are detailed enough to cook
-    expect(recipe.instructions.some((instr) => instr.toLowerCase().includes('chicken'))).toBe(true);
+    expect(recipe.instructions.some((instr: any) => instr.toLowerCase().includes('chicken'))).toBe(true);
   });
 
   /**
@@ -129,7 +129,7 @@ describe('Cooking Flow', () => {
     expect(recipe.ingredients.length).toBeGreaterThan(0);
 
     // Verify rice is in ingredients
-    expect(recipe.ingredients.some((ing) => ing.name.toLowerCase().includes('rice'))).toBe(true);
+    expect(recipe.ingredients.some((ing: any) => ing.name.toLowerCase().includes('rice'))).toBe(true);
 
     // In the API, ingredients_to_deduct would include confidence: 'approximate'
     // This tells frontend to show warning: "Rice quantity is approximate - review before confirming"
@@ -248,12 +248,161 @@ describe('Cooking Flow', () => {
         ])
       );
 
-      recipe.ingredients.forEach((ing) => {
+      recipe.ingredients.forEach((ing: any) => {
         expect(inventorySet.has(ing.name.toLowerCase())).toBe(true);
       });
     } catch (error) {
       // If generateRecipeDetail throws, that's also valid
       expect(error).toBeDefined();
     }
+  });
+});
+
+describe('Recipe Adjustments (Task 7: Conversational Cooking)', () => {
+  /**
+   * Test 1: Parse simple quantity adjustment
+   *
+   * User says: "I only have 300g flour"
+   * Expected: parseRecipeAdjustments returns adjustment for flour with new quantity
+   */
+  test('should parse simple quantity adjustment', async () => {
+    const userInput = 'I only have 300g flour';
+    const recipeContext = {
+      ingredients: [
+        { name: 'flour', quantity: 500, unit: 'g' },
+        { name: 'milk', quantity: 300, unit: 'ml' },
+      ],
+    };
+
+    const result = await parseRecipeAdjustments(userInput, recipeContext);
+
+    expect(Array.isArray(result)).toBe(true);
+    expect(result.length).toBeGreaterThan(0);
+
+    const flourAdjustment = result.find((adj) => adj.ingredient.toLowerCase() === 'flour');
+    expect(flourAdjustment).toBeDefined();
+    expect(flourAdjustment?.type).toBe('quantity');
+    expect(flourAdjustment?.quantity).toBe(300);
+    expect(flourAdjustment?.unit).toBe('g');
+  });
+
+  /**
+   * Test 2: Parse ingredient removal
+   *
+   * User says: "The milk is gone off"
+   * Expected: parseRecipeAdjustments returns removal adjustment for milk
+   */
+  test('should parse ingredient removal', async () => {
+    const userInput = 'The milk is gone off';
+    const recipeContext = {
+      ingredients: [
+        { name: 'flour', quantity: 500, unit: 'g' },
+        { name: 'milk', quantity: 300, unit: 'ml' },
+      ],
+    };
+
+    const result = await parseRecipeAdjustments(userInput, recipeContext);
+
+    expect(Array.isArray(result)).toBe(true);
+    expect(result.length).toBeGreaterThan(0);
+
+    const milkAdjustment = result.find((adj) => adj.ingredient.toLowerCase() === 'milk');
+    expect(milkAdjustment).toBeDefined();
+    expect(milkAdjustment?.type).toBe('removal');
+  });
+
+  /**
+   * Test 3: Parse multiple adjustments at once
+   *
+   * User says: "I have 300g flour, milk is gone, 6 eggs"
+   * Expected: parseRecipeAdjustments returns multiple adjustments in one call
+   */
+  test('should parse multiple adjustments in one input', async () => {
+    const userInput = 'I have 300g flour, milk is gone, 6 eggs';
+    const recipeContext = {
+      ingredients: [
+        { name: 'flour', quantity: 500, unit: 'g' },
+        { name: 'milk', quantity: 300, unit: 'ml' },
+        { name: 'eggs', quantity: 2, unit: 'pieces' },
+      ],
+    };
+
+    const result = await parseRecipeAdjustments(userInput, recipeContext);
+
+    expect(Array.isArray(result)).toBe(true);
+    expect(result.length).toBeGreaterThanOrEqual(2);
+
+    // Should find flour adjustment
+    expect(result.some((adj) => adj.ingredient.toLowerCase() === 'flour')).toBe(true);
+
+    // Should find milk removal
+    expect(result.some((adj) => adj.ingredient.toLowerCase() === 'milk' && adj.type === 'removal')).toBe(true);
+
+    // Should find eggs adjustment
+    expect(result.some((adj) => adj.ingredient.toLowerCase() === 'eggs')).toBe(true);
+  });
+
+  /**
+   * Test 4: Parse substitution request
+   *
+   * User says: "Can I use cod instead of chicken?"
+   * Expected: parseRecipeAdjustments returns substitution adjustment
+   */
+  test('should parse ingredient substitution', async () => {
+    const userInput = 'Can I use cod instead of chicken?';
+    const recipeContext = {
+      ingredients: [
+        { name: 'chicken', quantity: 200, unit: 'g' },
+        { name: 'potatoes', quantity: 300, unit: 'g' },
+      ],
+    };
+
+    const result = await parseRecipeAdjustments(userInput, recipeContext);
+
+    expect(Array.isArray(result)).toBe(true);
+    expect(result.length).toBeGreaterThan(0);
+
+    const substitution = result.find((adj) => adj.type === 'substitution');
+    expect(substitution).toBeDefined();
+    expect(substitution?.ingredient.toLowerCase()).toBe('chicken');
+    expect(substitution?.substitute_with?.toLowerCase()).toBe('cod');
+  });
+
+  /**
+   * Test 5: Parse with confidence level
+   *
+   * User says: "I have 300g flour" (exact) vs "about 300g flour" (approximate)
+   * Expected: parseRecipeAdjustments sets confidence level appropriately
+   */
+  test('should parse confidence levels in adjustments', async () => {
+    const userInput = 'I have exactly 300g flour';
+    const recipeContext = {
+      ingredients: [{ name: 'flour', quantity: 500, unit: 'g' }],
+    };
+
+    const result = await parseRecipeAdjustments(userInput, recipeContext);
+
+    expect(Array.isArray(result)).toBe(true);
+    const adjustment = result[0];
+    expect(adjustment.confidence).toBe('exact');
+  });
+
+  /**
+   * Test 6: Return empty array for no adjustments
+   *
+   * User says: "Looks good" (no adjustments)
+   * Expected: parseRecipeAdjustments returns empty array
+   */
+  test('should return empty array when no adjustments mentioned', async () => {
+    const userInput = 'Looks good, ready to cook!';
+    const recipeContext = {
+      ingredients: [{ name: 'flour', quantity: 500, unit: 'g' }],
+    };
+
+    const result = await parseRecipeAdjustments(userInput, recipeContext);
+
+    expect(Array.isArray(result)).toBe(true);
+    // Should be empty or contain no actionable adjustments
+    expect(result.length).toBe(0);
   });
 });
