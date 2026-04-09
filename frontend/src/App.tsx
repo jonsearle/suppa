@@ -10,7 +10,7 @@ type AppTab = 'inventory' | 'suggestions' | 'cooking';
 
 interface CookingState {
   sessionId: string;
-  recipeName: string;
+  recipe: RecipeDetail;
   ingredients: InventoryItem[];
 }
 
@@ -24,10 +24,10 @@ function App() {
     setCurrentTab('suggestions');
   };
 
-  const handleStartCooking = (sessionId: string, ingredients: InventoryItem[]) => {
+  const handleStartCooking = (sessionId: string, recipe: RecipeDetail, ingredients: InventoryItem[]) => {
     setCookingState({
       sessionId,
-      recipeName: selectedRecipe?.name || '',
+      recipe,
       ingredients,
     });
     setCurrentTab('cooking');
@@ -118,9 +118,8 @@ function App() {
             <div className="flex items-center justify-center min-h-96">
               <CookingConfirm
                 sessionId={cookingState.sessionId}
-                recipeName={cookingState.recipeName}
-                ingredientsToDeduct={cookingState.ingredients}
-                onConfirm={handleCookingComplete}
+                recipe={cookingState.recipe}
+                onComplete={handleCookingComplete}
                 onCancel={handleCancel}
               />
             </div>

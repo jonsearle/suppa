@@ -55,7 +55,7 @@ export interface MealSuggestions {
   recipes: Recipe[];
 }
 
-export interface CookingState {
+export interface StartCookingResponse {
   recipe: RecipeDetail;
   inventory_before: InventoryItem[];
 }
@@ -133,6 +133,15 @@ export interface CookingState {
   loading: boolean;
   error: string | null;
   sessionId: string | null;
+}
+
+export interface RecipeAdjustment {
+  type: 'quantity' | 'removal' | 'substitution' | 'confirmation';
+  ingredient: string;
+  quantity?: number;
+  unit?: string;
+  substitute_with?: string;
+  confidence: 'exact' | 'approximate';
 }
 
 export interface CookingConfirmState {

@@ -9,9 +9,10 @@ import type {
   RecipeDetail,
   InventoryItem,
   MealSuggestions,
+  RecipeAdjustment,
 } from '../types';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8888';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
 
 class ApiError extends Error {
   constructor(
@@ -79,7 +80,7 @@ export async function addInventory(userInput: string): Promise<InventoryItem[]> 
     method: 'POST',
     body: JSON.stringify({ user_input: userInput }),
   });
-  return data.items || [];
+  return data.data || data.items || [];
 }
 
 /**
@@ -90,7 +91,18 @@ export async function getInventory(): Promise<InventoryItem[]> {
   const data = await fetchWithErrorHandling('/api/inventory', {
     method: 'GET',
   });
-  return data.items || [];
+  return data.data || data.items || [];
+}
+
+export async function clearInventory(): Promise<{ cleared: number; message: string }> {
+  const data = await fetchWithErrorHandling('/api/inventory', {
+    method: 'DELETE',
+  });
+
+  return {
+    cleared: data.cleared || 0,
+    message: data.message || 'Inventory cleared',
+  };
 }
 
 /**
@@ -187,5 +199,39 @@ export async function completeCooking(
   };
 }
 
+/**
+ * Confirm recipe adjustments with user input and get updated recipe
+ * Backend parses adjustments and applies them in one call
+ * @throws ApiError on network or server errors
+ */
+export async function confirmRecipeAdjustments(
+  sessionId: string,
+  userInput: string
+): Promise<{
+  recipe: RecipeDetail;
+  ingredients_to_deduct: Array<{ name: string; quantity: number; unit: string }>;
+}> {
+  const data = await fetchWithErrorHandling('/api/cooking/confirm-adjustments', {
+    method: 'POST',
+    body: JSON.stringify({
+      session_id: sessionId,
+      user_input: userInput,
+    }),
+  });
+  return {
+    recipe: data.recipe || data.data?.recipe,
+    ingredients_to_deduct: data.ingredients_to_deduct || data.data?.ingredients_to_deduct || [],
+  };
+}
+
 export { ApiError };
-export default { addInventory, getInventory, suggestMeals, getRecipeDetail, startCooking, completeCooking };
+export default {
+  addInventory,
+  getInventory,
+  clearInventory,
+  suggestMeals,
+  getRecipeDetail,
+  startCooking,
+  completeCooking,
+  confirmRecipeAdjustments,
+};

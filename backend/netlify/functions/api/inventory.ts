@@ -6,9 +6,9 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { parseInventoryInput } from './utils/prompts';
-import { getInventory, addInventoryItem } from './utils/db';
-import { InventoryItem } from '../shared/types';
+import { parseInventoryInput } from './utils/prompts.ts';
+import { getInventory, addInventoryItem, clearInventory } from './utils/db.ts';
+import { InventoryItem } from '../shared/types.ts';
 
 const router = Router();
 
@@ -110,6 +110,31 @@ router.get('/', async (req: Request, res: Response) => {
 
     res.status(500).json({
       error: 'Failed to fetch inventory',
+      details: errorMsg,
+    });
+  }
+});
+
+/**
+ * DELETE /api/inventory
+ * Clear all active inventory items for the current user.
+ * Intended for local/dev testing so the app can be reset quickly.
+ */
+router.delete('/', async (req: Request, res: Response) => {
+  try {
+    const clearedCount = await clearInventory();
+
+    res.status(200).json({
+      cleared: clearedCount,
+      message: `Cleared ${clearedCount} inventory item${clearedCount === 1 ? '' : 's'}`,
+    });
+  } catch (error) {
+    console.error('Error in DELETE /api/inventory:', error);
+
+    const errorMsg = error instanceof Error ? error.message : String(error);
+
+    res.status(500).json({
+      error: 'Failed to clear inventory',
       details: errorMsg,
     });
   }

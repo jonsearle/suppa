@@ -6,8 +6,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { suggestMeals } from './utils/prompts';
-import { getInventory } from './utils/db';
+import { suggestMeals } from './utils/prompts.ts';
+import { getInventory } from './utils/db.ts';
 
 const router = Router();
 

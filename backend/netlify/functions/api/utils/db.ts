@@ -5,6 +5,7 @@
  */
 
 import { InventoryItem, ChatMessage } from '../../shared/types';
+import { convertToCanonical } from './units';
 
 /**
  * Get PocketBase URL from environment
@@ -207,12 +208,16 @@ export async function deductInventory(itemId: string): Promise<InventoryItem> {
 }
 
 /**
- * Deduct a specific quantity from an inventory item (TASK 8: Fix)
+ * Deduct a specific quantity from an inventory item (TASK 8: Fix + Unit Normalization)
  * Handles partial deductions properly:
  * - If item is boolean (has_item=true): Mark entire item as used
  * - If deducting exact amount: Mark item as used
  * - If deducting partial amount: Create new item with remainder, mark original as used
  * - If insufficient quantity: Throw error (prevent deduction)
+ *
+ * UNIT CONVERSION: quantityToDeduct is assumed to be in CANONICAL units (g, ml, pieces)
+ * The function converts inventory item's unit to canonical before comparing
+ * This allows "1 cup rice" inventory to match "125g rice" deduction request
  *
  * Returns { deducted_item, remainder_item_id } where remainder is null if fully consumed
  */
@@ -245,16 +250,25 @@ export async function deductInventoryQuantity(
   if (quantityToDeduct !== undefined && item.quantity_approx !== null) {
     const available = item.quantity_approx;
 
-    // CRITICAL FIX: Block deduction if insufficient quantity
-    if (available < quantityToDeduct) {
+    // UNIT NORMALIZATION FIX: Convert inventory item's unit to canonical before comparing
+    // This ensures "1 cup rice" can be properly compared against "125g rice" (normalized from 1 cup)
+    // The deduction quantity is assumed to be in canonical units (from normalized recipe)
+    const inventoryCanonical = convertToCanonical(available, item.unit, item.name);
+
+    // Compare quantities in the same unit system
+    // CRITICAL FIX: Block deduction if insufficient quantity (after unit conversion)
+    if (inventoryCanonical.quantity < quantityToDeduct) {
       throw new Error(
-        `Insufficient quantity: need ${quantityToDeduct} ${item.unit || 'units'}, ` +
-          `have ${available}. User must review recipe or add more inventory.`
+        `Insufficient quantity: need ${quantityToDeduct}${inventoryCanonical.unit}, ` +
+          `have ${inventoryCanonical.quantity}${inventoryCanonical.unit}. User must review recipe or add more inventory.`
       );
     }
 
-    // Exact match or very close: mark entire item as used
-    if (Math.abs(available - quantityToDeduct) < 0.01) {
+    // Calculate remainder using canonical quantity
+    const remainderQuantity = inventoryCanonical.quantity - quantityToDeduct;
+
+    // Exact match or very close: mark entire item as used (compare in canonical units)
+    if (Math.abs(remainderQuantity) < 0.01) {
       const deductedItem = await pocketbaseFetch(
         `/collections/inventory_items/records/${itemId}`,
         {
@@ -267,7 +281,11 @@ export async function deductInventoryQuantity(
     }
 
     // Partial deduction: create remainder item, mark original as used
-    const remainder = available - quantityToDeduct;
+    // The remainder is calculated in canonical units, but we need to store it in the original unit
+    // Calculate the ratio to convert remainder back to original unit
+    // E.g., if 1 cup = 125g, and remainderQuantity = 25g, then remainder_in_cups = 25 / 125 = 0.2 cups
+    const conversionRatio = inventoryCanonical.quantity / available; // canonical per original unit
+    const remainder = remainderQuantity / conversionRatio; // convert remainder back to original unit
 
     // Create new item for remainder
     // PocketBase POST: /api/collections/{collection}/records
@@ -279,8 +297,8 @@ export async function deductInventoryQuantity(
           user_id: userId,
           name: item.name,
           canonical_name: item.canonical_name,
-          quantity_approx: remainder,
-          unit: item.unit,
+          quantity_approx: remainder,  // Now in original unit (e.g., 0.2 cups)
+          unit: item.unit,             // Original unit (e.g., 'cup')
           confidence: item.confidence,
           has_item: false,
           date_added: new Date().toISOString(),

@@ -4,7 +4,7 @@ import { getRecipeDetail, startCooking } from '../services/api';
 
 interface RecipeDetailProps {
   recipe: Recipe;
-  onStartCooking?: (sessionId: string, ingredients: any[]) => void;
+  onStartCooking?: (sessionId: string, recipeDetail: RecipeDetailType, ingredients: any[]) => void;
   onBack?: () => void;
 }
 
@@ -44,7 +44,7 @@ export const RecipeDetail: React.FC<RecipeDetailProps> = ({
       setStarting(true);
       setError(null);
       const result = await startCooking(detail);
-      onStartCooking?.(result.sessionId, result.ingredientsToDeduct);
+      onStartCooking?.(result.sessionId, detail, result.ingredientsToDeduct);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Failed to start cooking';

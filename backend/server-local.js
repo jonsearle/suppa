@@ -1,10 +1,12 @@
 // Simple local development server for Suppa backend
 // Runs Express app directly without Netlify wrapper
 
-import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
+import dotenv from 'dotenv';
 import app from './netlify/functions/api.ts';
+
+// Prefer local developer overrides, then fall back to .env when present.
+dotenv.config({ path: '.env.local' });
+dotenv.config();
 
 const PORT = process.env.PORT || 3000;
 

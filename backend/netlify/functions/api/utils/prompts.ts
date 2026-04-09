@@ -7,6 +7,7 @@
 
 import OpenAI from 'openai';
 import { InventoryItem, Recipe, RecipeDetail } from '../../shared/types';
+import { convertToCanonical, cacheCanonicalUnit } from './units';
 
 let openaiClient: OpenAI | null = null;
 
@@ -143,11 +144,22 @@ function generateRecipeDetailLocally(
   recipeDescription: string,
   userInventory: InventoryItem[]
 ): RecipeDetail {
-  const ingredients = userInventory.slice(0, 5).map((item) => ({
-    name: item.canonical_name || item.name.toLowerCase(),
+  const rawIngredients = userInventory.slice(0, 5).map((item) => ({
+    name: item.name.toLowerCase(),
     quantity: item.quantity_approx ?? 1,
     unit: item.unit || (item.has_item ? 'to taste' : 'pieces'),
   }));
+
+  // Normalize ingredient quantities to canonical units
+  const ingredients = rawIngredients.map((ing) => {
+    const result = convertToCanonical(ing.quantity, ing.unit, ing.name);
+    cacheCanonicalUnit(ing.name, result.unit);
+    return {
+      name: ing.name,
+      quantity: result.quantity,
+      unit: result.unit,
+    };
+  });
 
   return {
     name: recipeName,
@@ -518,6 +530,19 @@ Return ONLY a JSON object, no other text. Example format:
         `Available: ${inventoryNames}`
       );
     }
+
+    // Normalize ingredient quantities to canonical units
+    // e.g., 1 cup rice → 125g rice, 240ml milk → 240ml milk
+    parsed.ingredients = parsed.ingredients.map((ing: any) => {
+      const result = convertToCanonical(ing.quantity, ing.unit, ing.name);
+      // Cache the canonical unit for this ingredient for future use
+      cacheCanonicalUnit(ing.name, result.unit);
+      return {
+        name: ing.name,
+        quantity: result.quantity,
+        unit: result.unit,
+      };
+    });
 
     return parsed;
   } catch (error) {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { addInventory, getInventory } from '../services/api';
-import type { InventoryItem, ApiError } from '../types';
+import { addInventory, clearInventory, getInventory } from '../services/api';
+import type { InventoryItem } from '../types';
 
 interface InventoryFormProps {
   onInventoryUpdate?: (items: InventoryItem[]) => void;
@@ -9,6 +9,7 @@ interface InventoryFormProps {
 export const InventoryForm: React.FC<InventoryFormProps> = ({ onInventoryUpdate }) => {
   const [input, setInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -55,6 +56,29 @@ export const InventoryForm: React.FC<InventoryFormProps> = ({ onInventoryUpdate 
       setError(message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleClearInventory = async () => {
+    const confirmed = window.confirm(
+      'Clear all current inventory items for testing? This will reset the inventory list.'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setClearing(true);
+      setError(null);
+      await clearInventory();
+      await loadInventory();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to clear inventory';
+      setError(message);
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -108,9 +132,19 @@ export const InventoryForm: React.FC<InventoryFormProps> = ({ onInventoryUpdate 
 
       {/* Current Inventory */}
       <div className="bg-white rounded-lg shadow-md p-6">
-        <h2 className="text-xl font-semibold mb-4">
-          Current Inventory ({activeItems.length})
-        </h2>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-xl font-semibold">
+            Current Inventory ({activeItems.length})
+          </h2>
+          <button
+            type="button"
+            onClick={handleClearInventory}
+            disabled={loading || clearing}
+            className="inline-flex items-center justify-center rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-semibold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {clearing ? 'Clearing Inventory...' : 'Clear Inventory for Testing'}
+          </button>
+        </div>
 
         {loading ? (
           <div className="text-center py-8 text-gray-500">Loading...</div>

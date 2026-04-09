@@ -13,9 +13,9 @@
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import 'dotenv/config';
-import inventoryRouter from './api/inventory';
-import chatRouter from './api/chat';
-import cookingRouter from './api/cooking';
+import inventoryRouter from './api/inventory.ts';
+import chatRouter from './api/chat.ts';
+import cookingRouter from './api/cooking.ts';
 
 const app: Express = express();
 

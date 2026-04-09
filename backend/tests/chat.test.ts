@@ -39,6 +39,18 @@ function createInventoryItem(
 }
 
 describe('Meal Suggestion API (suggestMeals)', () => {
+  test('should return no suggestions for pantry-staples-only inventory without calling OpenAI', async () => {
+    const inventory: InventoryItem[] = [
+      createInventoryItem('1', 'salt', 'salt', undefined, undefined, true),
+      createInventoryItem('2', 'pepper', 'pepper', undefined, undefined, true),
+      createInventoryItem('3', 'oil', 'oil', undefined, undefined, true),
+    ];
+
+    const result = await suggestMeals(inventory, 'breakfast');
+
+    expect(result).toEqual([]);
+  });
+
   // Skip all tests if OPENAI_API_KEY is not set
   const skipIfNoKey = process.env.OPENAI_API_KEY ? describe : describe.skip;
 

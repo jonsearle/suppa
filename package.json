@@ -1,0 +1,8 @@
+{
+  "name": "suppa-dev-tools",
+  "private": true,
+  "scripts": {
+    "dev": "./scripts/start-suppa-dev.sh",
+    "dev:stop": "./scripts/stop-suppa-dev.sh"
+  }
+}
