@@ -1,0 +1,19 @@
+[build]
+  command = "cd backend && npm install && npm run build && cd ../frontend && npm install && npm run build"
+  publish = "frontend/dist"
+  functions = "backend/netlify/functions"
+
+[build.environment]
+  POCKETBASE_URL = "https://your-pocketbase-railway-url.up.railway.app"
+  USER_ID = "prod_user"
+  OPENAI_API_KEY = ""
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

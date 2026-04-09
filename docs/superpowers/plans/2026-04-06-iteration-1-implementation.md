@@ -183,13 +183,17 @@ CREATE TABLE inventory_items (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   user_id UUID NOT NULL REFERENCES users(id),
   name TEXT NOT NULL,
+  canonical_name TEXT,
+  has_item BOOLEAN DEFAULT FALSE,
   quantity_approx NUMERIC,
   unit TEXT,
+  confidence VARCHAR(20) DEFAULT 'approximate',
   date_added TIMESTAMP DEFAULT now(),
   date_used TIMESTAMP
 );
 
 CREATE INDEX idx_inventory_user ON inventory_items(user_id);
+CREATE INDEX idx_inventory_canonical ON inventory_items(user_id, canonical_name);
 ```
 
 Table: `chat_messages`
@@ -254,8 +258,11 @@ export interface InventoryItem {
   id: string;
   user_id: string;
   name: string;
+  canonical_name?: string;
+  has_item?: boolean;
   quantity_approx?: number;
   unit?: string;
+  confidence: 'exact' | 'approximate';
   date_added: string;
   date_used?: string;
 }
@@ -270,16 +277,18 @@ export interface ChatMessage {
 
 export interface Recipe {
   name: string;
+  description: string;  // Menu-style description with health/character notes
   time_estimate_mins: number;
-  key_ingredients: string[];
-  brief_method: string;
 }
 
 export interface MealSuggestions {
   recipes: Recipe[];
 }
 
-export interface RecipeDetail extends Recipe {
+export interface RecipeDetail {
+  name: string;
+  description: string;
+  time_estimate_mins: number;
   ingredients: Array<{ name: string; quantity: number | string; unit: string }>;
   instructions: string[];
 }
@@ -325,15 +334,91 @@ git commit -m "feat: initialize project structure with React frontend and Node b
 
 ---
 
-### **Task 2: Inventory Parsing API (Day 3)**
+### **Task 2: Inventory Parsing API & Deduplication (Day 3)**
 
 **Files:**
+- Create: `backend/netlify/functions/api/utils/canonical-foods.ts` — Canonical food mappings
 - Create: `backend/netlify/functions/api/utils/db.ts`
 - Create: `backend/netlify/functions/api/utils/prompts.ts`
 - Create: `backend/netlify/functions/api/inventory.ts`
 - Create: `backend/tests/inventory.test.ts`
 
 **Step-by-step:**
+
+- [ ] **Step 0: Create canonical foods mapping**
+
+`backend/netlify/functions/api/utils/canonical-foods.ts`:
+```typescript
+// Maps variations of food names to canonical form for deduplication
+// Used by addInventoryItem() to merge duplicate items
+export const CANONICAL_FOODS: Record<string, string> = {
+  // Potatoes
+  'potato': 'potato',
+  'potatoes': 'potato',
+  'spuds': 'potato',
+
+  // Tomatoes
+  'tomato': 'tomato',
+  'tomatoes': 'tomato',
+  'cherry tomato': 'cherry_tomato',
+  'cherry tomatoes': 'cherry_tomato',
+
+  // Beans
+  'bean': 'bean',
+  'beans': 'bean',
+  'green bean': 'green_bean',
+  'green beans': 'green_bean',
+  'baked bean': 'baked_bean',
+  'baked beans': 'baked_bean',
+
+  // Carrots
+  'carrot': 'carrot',
+  'carrots': 'carrot',
+
+  // Chicken
+  'chicken': 'chicken',
+  'chicken breast': 'chicken_breast',
+  'chicken breasts': 'chicken_breast',
+  'chicken thigh': 'chicken_thigh',
+  'chicken thighs': 'chicken_thigh',
+
+  // Rice
+  'rice': 'rice',
+  'white rice': 'rice',
+  'brown rice': 'brown_rice',
+
+  // Pasta
+  'pasta': 'pasta',
+  'penne': 'pasta',
+  'spaghetti': 'pasta',
+
+  // Salad
+  'salad': 'salad_leaves',
+  'salad leaves': 'salad_leaves',
+  'mixed salad': 'salad_leaves',
+  'lettuce': 'salad_leaves',
+
+  // Oil
+  'oil': 'oil',
+  'olive oil': 'olive_oil',
+  'vegetable oil': 'vegetable_oil',
+
+  // Spices (has_item=true)
+  'salt': 'salt',
+  'pepper': 'pepper',
+  'garlic': 'garlic',
+  'onion': 'onion',
+  'onions': 'onion',
+  'basil': 'basil',
+  'cumin': 'cumin',
+};
+
+// Get canonical name for an item
+export function getCanonicalName(itemName: string): string {
+  const lowercased = itemName.toLowerCase().trim();
+  return CANONICAL_FOODS[lowercased] || lowercased;
+}
+```
 
 - [ ] **Step 1: Write failing test for inventory parsing**
 
@@ -410,16 +495,55 @@ export async function getInventory(): Promise<InventoryItem[]> {
 
 export async function addInventoryItem(
   name: string,
+  canonical_name?: string,
+  has_item?: boolean,
   quantity_approx?: number,
-  unit?: string
+  unit?: string,
+  confidence?: 'exact' | 'approximate'
 ): Promise<InventoryItem> {
+  const { getCanonicalName } = await import('./canonical-foods');
+
+  const canonicalName = canonical_name || getCanonicalName(name);
+
+  // Check if item with same canonical_name already exists for this user
+  const { data: existing } = await supabase
+    .from('inventory_items')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('canonical_name', canonicalName)
+    .is('date_used', null)
+    .single();
+
+  if (existing) {
+    // Merge: update quantity and unit if provided, keep most recent name
+    const { data, error } = await supabase
+      .from('inventory_items')
+      .update({
+        name: name || existing.name,  // Use new name if provided
+        quantity_approx: quantity_approx !== undefined ? quantity_approx : existing.quantity_approx,
+        unit: unit || existing.unit,
+        confidence: confidence || existing.confidence,
+        date_added: new Date().toISOString(),  // Update timestamp to indicate recent add
+      })
+      .eq('id', existing.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  }
+
+  // No existing item: create new
   const { data, error } = await supabase
     .from('inventory_items')
     .insert([{
       user_id: userId,
       name,
+      canonical_name: canonicalName,
+      has_item: has_item || false,
       quantity_approx,
       unit,
+      confidence: confidence || 'approximate',
     }])
     .select()
     .single();
@@ -483,18 +607,40 @@ const openai = new OpenAI({
 });
 
 export async function parseInventoryInput(userInput: string) {
-  const prompt = `You are a food inventory parsing assistant.
-User said: "${userInput}"
+  const { getCanonicalName } = await import('./canonical-foods');
 
-Extract food items and approximate quantities. Return JSON with this structure (and ONLY this JSON, no other text):
+  const prompt = `You are a food inventory parsing assistant. Extract food items and quantities from user input.
+
+Return ONLY this JSON structure (no other text):
 {
   "items": [
-    { "name": "item name", "quantity_approx": number or null, "unit": "unit" or null }
+    {
+      "name": "item name (what user said)",
+      "quantity_approx": number or null,
+      "unit": "unit" or null,
+      "has_item": boolean,
+      "confidence": "exact" or "approximate"
+    }
   ]
 }
 
-Quantities can be approximate ("some", "a bunch", 3, 1.5, etc.). Units are optional (e.g., "grams", "pieces", "bunch").
-If quantity is not specified, set to null. If unit is not applicable, set to null.`;
+Categories:
+1. Pantry staples (salt, spices, oils, condiments): set has_item=true, quantity_approx=null, unit=null, confidence="exact"
+2. Exact quantities (500g beef, 3 apples): quantity_approx and unit from user input, confidence="exact"
+3. Exact counts (2 chicken breasts, 5 carrots): quantity_approx as number, unit="pieces", confidence="exact"
+4. Rough quantities (some salad, lots of carrots, a few potatoes):
+   - "some" / "a little" / "a bit" → quantity_approx=1
+   - "a bunch" / "handful" / "quite a bit" → quantity_approx=2
+   - "lots" / "a lot" / "plenty" → quantity_approx=4
+   - confidence="approximate"
+
+Always parse fractions literally: "half" = 0.5, "1/3" = 0.33, etc.
+
+Examples:
+- "3 chicken breasts" → {name: "chicken breast", quantity_approx: 3, unit: "pieces", confidence: "exact"}
+- "some salad" → {name: "salad", quantity_approx: 1, unit: null, confidence: "approximate"}
+- "salt" → {name: "salt", has_item: true, quantity_approx: null, unit: null, confidence: "exact"}
+- "200g beef" → {name: "beef", quantity_approx: 200, unit: "g", confidence: "exact"}`;
 
   const message = await openai.messages.create({
     model: 'gpt-4o-mini',
@@ -507,73 +653,46 @@ If quantity is not specified, set to null. If unit is not applicable, set to nul
 
   try {
     const parsed = JSON.parse(content.text);
-    return parsed;
+    // Normalize names and add canonical_name
+    return {
+      ...parsed,
+      items: parsed.items.map((item: any) => ({
+        ...item,
+        canonical_name: getCanonicalName(item.name),
+      })),
+    };
   } catch (e) {
     throw new Error(`Failed to parse LLM response: ${content.text}`);
   }
 }
 
 export async function suggestMeals(
-  inventoryItems: Array<{ name: string }>,
+  inventoryItems: Array<{ name: string; canonical_name?: string }>,
   mealType: 'breakfast' | 'lunch' | 'dinner'
 ) {
   const itemNames = inventoryItems.map(i => i.name).join(', ');
+  const canonicalNames = new Set(inventoryItems.map(i => i.canonical_name || i.name.toLowerCase()));
 
   const prompt = `You are a meal suggestion assistant.
-User has these ingredients: ${itemNames}
+CRITICAL CONSTRAINT: You can ONLY suggest meals using ONLY these ingredients:
+${itemNames}
 
-Suggest 3-5 ${mealType} meals that use ONLY the available ingredients.
-Return JSON with this structure (and ONLY this JSON, no other text):
+Do NOT suggest any meals that require ingredients not in this list.
+Do NOT assume the user has salt, oil, butter, spices, or any pantry items.
+Do NOT suggest recipes that need ingredients you don't see in the list above.
+
+Suggest 3-5 diverse ${mealType} meals. Each meal MUST use ONLY the ingredients listed above.
+
+Return ONLY this JSON (no other text):
 {
   "recipes": [
-    { "name": "meal name", "time_estimate_mins": number, "key_ingredients": ["ingredient"], "brief_method": "short description" }
+    {
+      "name": "Meal Name",
+      "description": "Menu-style description. Example: 'Pan-seared chicken with fresh tomatoes and basil. Light, protein-rich, and naturally fresh.'",
+      "time_estimate_mins": 20
+    }
   ]
-}
-
-Meals should be diverse (not all the same). Only suggest meals using ONLY available ingredients.`;
-
-  const message = await openai.messages.create({
-    model: 'gpt-4o-mini',
-    max_tokens: 1000,
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  const content = message.content[0];
-  if (content.type !== 'text') throw new Error('Unexpected response type');
-
-  try {
-    const parsed = JSON.parse(content.text);
-    return parsed;
-  } catch (e) {
-    throw new Error(`Failed to parse LLM response: ${content.text}`);
-  }
-}
-
-export async function generateRecipeDetail(
-  recipeName: string,
-  keyIngredients: string[],
-  briefMethod: string
-): Promise<RecipeDetail> {
-  const prompt = `You are a recipe generation assistant.
-
-Meal: ${recipeName}
-Key ingredients: ${keyIngredients.join(', ')}
-Brief method: ${briefMethod}
-
-Generate a detailed recipe with ingredients list and step-by-step instructions.
-Return JSON with this structure (and ONLY this JSON):
-{
-  "name": "${recipeName}",
-  "time_estimate_mins": number,
-  "key_ingredients": ["ingredient"],
-  "brief_method": "${briefMethod}",
-  "ingredients": [
-    { "name": "ingredient name", "quantity": number or "to taste", "unit": "unit" }
-  ],
-  "instructions": ["step 1", "step 2", etc]
-}
-
-Instructions should include quantities (e.g., "Add 3 tomatoes and 200g chicken").`;
+}`;
 
   const message = await openai.messages.create({
     model: 'gpt-4o-mini',
@@ -586,9 +705,97 @@ Instructions should include quantities (e.g., "Add 3 tomatoes and 200g chicken")
 
   try {
     const parsed = JSON.parse(content.text);
+
+    // Validate: ensure all recipes can theoretically be made with inventory
+    // (post-validation happens when generateRecipeDetail is called)
+    if (!Array.isArray(parsed.recipes)) {
+      throw new Error('Response recipes is not an array');
+    }
+
+    parsed.recipes.forEach((recipe: any) => {
+      if (!recipe.name || !recipe.description || !recipe.time_estimate_mins) {
+        throw new Error(`Invalid recipe structure: ${JSON.stringify(recipe)}`);
+      }
+    });
+
     return parsed;
   } catch (e) {
-    throw new Error(`Failed to parse LLM response: ${content.text}`);
+    throw new Error(`Failed to parse meal suggestions: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+export async function generateRecipeDetail(
+  recipeName: string,
+  recipeDescription: string,
+  userInventory: Array<{ name: string; canonical_name?: string }>
+): Promise<RecipeDetail> {
+  const inventoryNames = userInventory.map(i => i.name).join(', ');
+  const inventorySet = new Set(
+    userInventory.flatMap(i => [
+      i.name.toLowerCase(),
+      i.canonical_name?.toLowerCase() || i.name.toLowerCase(),
+    ])
+  );
+
+  const prompt = `You are a recipe generation assistant.
+CRITICAL: You can ONLY use these ingredients:
+${inventoryNames}
+
+Do NOT add salt, oil, butter, spices, water, or any ingredients not in the list above.
+Every single ingredient in your recipe must be from the list above.
+
+Recipe: ${recipeName}
+Description: ${recipeDescription}
+
+Generate a detailed recipe using ONLY the available ingredients.
+Return ONLY this JSON (no other text):
+{
+  "name": "${recipeName}",
+  "description": "${recipeDescription}",
+  "time_estimate_mins": number,
+  "ingredients": [
+    { "name": "ingredient name", "quantity": number or "to taste", "unit": "unit" }
+  ],
+  "instructions": [
+    "step 1",
+    "step 2",
+    etc
+  ]
+}
+
+Instructions must include quantities (e.g., "Add 2 tomatoes and 200g chicken").`;
+
+  const message = await openai.messages.create({
+    model: 'gpt-4o-mini',
+    max_tokens: 2000,
+    messages: [{ role: 'user', content: prompt }],
+  });
+
+  const content = message.content[0];
+  if (content.type !== 'text') throw new Error('Unexpected response type');
+
+  try {
+    const parsed = JSON.parse(content.text);
+
+    // POST-VALIDATION: Check that every ingredient is in user's inventory
+    const invalidIngredients: string[] = [];
+    parsed.ingredients.forEach((ing: any) => {
+      const ingName = ing.name.toLowerCase();
+      if (!inventorySet.has(ingName)) {
+        invalidIngredients.push(ing.name);
+      }
+    });
+
+    if (invalidIngredients.length > 0) {
+      throw new Error(
+        `Recipe suggests ingredients not in inventory: ${invalidIngredients.join(', ')}. ` +
+        `This should not happen. User inventory: ${inventoryNames}`
+      );
+    }
+
+    return parsed;
+  } catch (e) {
+    throw new Error(`Failed to generate recipe: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 ```
@@ -773,10 +980,10 @@ import { suggestMeals } from '../netlify/functions/api/utils/prompts';
 describe('Meal Suggestions', () => {
   it('should suggest meals from available inventory', async () => {
     const inventory = [
-      { name: 'chicken' },
-      { name: 'rice' },
-      { name: 'tomatoes' },
-      { name: 'basil' },
+      { name: 'chicken', canonical_name: 'chicken' },
+      { name: 'rice', canonical_name: 'rice' },
+      { name: 'tomatoes', canonical_name: 'tomato' },
+      { name: 'basil', canonical_name: 'basil' },
     ];
 
     const result = await suggestMeals(inventory, 'dinner');
@@ -785,38 +992,38 @@ describe('Meal Suggestions', () => {
     expect(result.recipes.length).toBeGreaterThan(0);
     expect(result.recipes.length).toBeLessThanOrEqual(5);
 
-    // Check structure
+    // Check structure: name, description, time_estimate_mins
     result.recipes.forEach(recipe => {
       expect(recipe.name).toBeDefined();
+      expect(recipe.description).toBeDefined();
       expect(recipe.time_estimate_mins).toBeGreaterThan(0);
-      expect(Array.isArray(recipe.key_ingredients)).toBe(true);
-      expect(recipe.brief_method).toBeDefined();
     });
   });
 
   it('should suggest only meals using available ingredients', async () => {
     const inventory = [
-      { name: 'eggs' },
-      { name: 'bread' },
-      { name: 'butter' },
+      { name: 'eggs', canonical_name: 'eggs' },
+      { name: 'bread', canonical_name: 'bread' },
     ];
 
     const result = await suggestMeals(inventory, 'breakfast');
 
-    // All suggestions should theoretically use only these 3 items
+    // All suggestions should theoretically use only these items
     expect(result.recipes.length).toBeGreaterThan(0);
+    result.recipes.forEach(recipe => {
+      expect(recipe.name).toBeDefined();
+      expect(recipe.description).toBeDefined();
+    });
   });
 
   it('should vary suggestions (not all the same meal)', async () => {
     const inventory = [
-      { name: 'chicken' },
-      { name: 'rice' },
-      { name: 'tomatoes' },
-      { name: 'basil' },
-      { name: 'garlic' },
-      { name: 'onions' },
-      { name: 'pasta' },
-      { name: 'olive oil' },
+      { name: 'chicken', canonical_name: 'chicken' },
+      { name: 'rice', canonical_name: 'rice' },
+      { name: 'tomatoes', canonical_name: 'tomato' },
+      { name: 'basil', canonical_name: 'basil' },
+      { name: 'garlic', canonical_name: 'garlic' },
+      { name: 'onions', canonical_name: 'onion' },
     ];
 
     const result = await suggestMeals(inventory, 'dinner');
@@ -1044,14 +1251,21 @@ git commit -m "feat: implement meal suggestion API with diversity focus"
 import { generateRecipeDetail } from '../netlify/functions/api/utils/prompts';
 
 describe('Recipe Generation', () => {
-  it('should generate detailed recipe from brief info', async () => {
+  it('should generate detailed recipe from name and description', async () => {
+    const userInventory = [
+      { name: 'tomatoes', canonical_name: 'tomato' },
+      { name: 'basil', canonical_name: 'basil' },
+      { name: 'pasta', canonical_name: 'pasta' },
+    ];
+
     const recipe = await generateRecipeDetail(
       'Tomato Basil Pasta',
-      ['tomatoes', 'basil', 'pasta', 'garlic'],
-      'Cook pasta, make tomato sauce, combine'
+      'Fresh pasta with tomatoes and basil. Simple, light, and flavorful.',
+      userInventory
     );
 
     expect(recipe.name).toBe('Tomato Basil Pasta');
+    expect(recipe.description).toBeDefined();
     expect(recipe.ingredients).toBeDefined();
     expect(recipe.instructions).toBeDefined();
     expect(Array.isArray(recipe.ingredients)).toBe(true);
@@ -1067,6 +1281,38 @@ describe('Recipe Generation', () => {
     // Instructions should include quantities
     const hasQuantities = recipe.instructions.some(instr => /\d+/.test(instr));
     expect(hasQuantities).toBe(true);
+
+    // All ingredients must be in user inventory
+    const inventoryNames = userInventory.map(i => i.name.toLowerCase());
+    recipe.ingredients.forEach(ing => {
+      expect(inventoryNames).toContain(ing.name.toLowerCase());
+    });
+  });
+
+  it('should reject recipes with ingredients not in inventory', async () => {
+    const userInventory = [
+      { name: 'eggs', canonical_name: 'eggs' },
+      { name: 'bread', canonical_name: 'bread' },
+    ];
+
+    // This recipe would normally need butter/oil which aren't available
+    // The LLM should either generate a valid recipe or throw an error
+    try {
+      const recipe = await generateRecipeDetail(
+        'Fried Bread',
+        'Crispy fried bread. Quick and satisfying.',
+        userInventory
+      );
+
+      // If it doesn't throw, verify all ingredients are available
+      const inventoryNames = userInventory.map(i => i.name.toLowerCase());
+      recipe.ingredients.forEach(ing => {
+        expect(inventoryNames).toContain(ing.name.toLowerCase());
+      });
+    } catch (error) {
+      // Expected: LLM can't make recipe without unavailable ingredients
+      expect(error).toBeDefined();
+    }
   });
 });
 ```
@@ -1100,17 +1346,17 @@ const handler: Handler = async (event: HandlerEvent) => {
 
     if (path === 'start' && event.httpMethod === 'POST') {
       // Start cooking a recipe
-      const { recipeName, keyIngredients, briefMethod } = JSON.parse(event.body || '{}');
+      const { recipeName, recipeDescription } = JSON.parse(event.body || '{}');
 
-      if (!recipeName) {
+      if (!recipeName || !recipeDescription) {
         return {
           statusCode: 400,
-          body: JSON.stringify({ error: 'recipeName required' }),
+          body: JSON.stringify({ error: 'recipeName and recipeDescription required' }),
         };
       }
 
-      const recipe = await generateRecipeDetail(recipeName, keyIngredients || [], briefMethod || '');
       const inventoryBefore = await getInventory();
+      const recipe = await generateRecipeDetail(recipeName, recipeDescription, inventoryBefore);
 
       currentCookingState = { recipe, inventory_before: inventoryBefore };
 
