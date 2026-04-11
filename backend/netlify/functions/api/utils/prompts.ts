@@ -527,6 +527,16 @@ Return ONLY a JSON object, no other text. Example format:
 
     const parsed = JSON.parse(jsonMatch[0]);
 
+    // Validate all ingredients have units
+    parsed.ingredients.forEach((ing: any) => {
+      if (!ing.unit || ing.unit === '' || ing.unit === null) {
+        throw new Error(
+          `Recipe ingredient "${ing.name}" is missing a unit. ` +
+          `All recipe ingredients must specify units (e.g., "g", "ml", "pieces").`
+        );
+      }
+    });
+
     // POST-VALIDATION: Check that every ingredient is in user's inventory
     const invalidIngredients: string[] = [];
     parsed.ingredients.forEach((ing: any) => {

@@ -1,4 +1,4 @@
-import { parseInventoryInput } from '../netlify/functions/api/utils/prompts';
+import { parseInventoryInput, generateRecipeDetail } from '../netlify/functions/api/utils/prompts';
 import { getCanonicalUnit } from '../netlify/functions/api/utils/units';
 
 describe('parseInventoryInput - Canonical Unit Caching', () => {
@@ -22,5 +22,28 @@ describe('parseInventoryInput - Canonical Unit Caching', () => {
 
     await parseInventoryInput('3 eggs');
     expect(getCanonicalUnit('eggs')).toBe('pieces');
+  });
+});
+
+describe('generateRecipeDetail - Unit Validation', () => {
+  test('should require all recipe ingredients to have units', async () => {
+    const mockInventory = [
+      { id: '1', name: 'rice', quantity_approx: 500, unit: 'g', confidence: 'exact' as const, user_id: 'test', date_added: new Date().toISOString() },
+      { id: '2', name: 'eggs', quantity_approx: 3, unit: 'pieces', confidence: 'exact' as const, user_id: 'test', date_added: new Date().toISOString() }
+    ];
+
+    // This should throw if any ingredient lacks a unit
+    const recipe = await generateRecipeDetail(
+      'Egg Fried Rice',
+      'Simple rice with eggs',
+      mockInventory
+    );
+
+    // Verify all ingredients have units
+    recipe.ingredients.forEach((ing: any) => {
+      expect(ing.unit).toBeDefined();
+      expect(ing.unit).not.toBeNull();
+      expect(ing.unit).not.toBe('');
+    });
   });
 });
