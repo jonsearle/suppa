@@ -10,6 +10,7 @@
 import { Router, Request, Response } from 'express';
 import { generateRecipeDetail, parseRecipeAdjustments, RecipeAdjustment, isIngredientCritical } from './utils/prompts';
 import { getInventory, deductInventoryQuantity } from './utils/db';
+import { convertToCanonical } from './utils/units';
 import { RecipeDetail, InventoryItem, StartCookingRequest } from '../shared/types';
 
 const router = Router();
@@ -197,10 +198,14 @@ router.post('/start', async (req: Request, res: Response) => {
         );
       }
 
+      // Convert recipe ingredient quantity to canonical units for proper deduction
+      // E.g., "1 cup rice" → "125g rice", "1 tbsp oil" → "15ml oil"
+      const canonical = convertToCanonical(ingredient.quantity, ingredient.unit, ingredient.name);
+
       return {
         name: ingredient.name,
-        quantity: ingredient.quantity,
-        unit: ingredient.unit,
+        quantity: canonical.quantity,
+        unit: canonical.unit,
         inventory_item_id: inventoryItem.id,
         confidence: inventoryItem.confidence,
       };
@@ -521,10 +526,14 @@ router.post('/confirm-adjustments', async (req: Request, res: Response) => {
         );
       }
 
+      // Convert recipe ingredient quantity to canonical units for proper deduction
+      const qty = typeof ingredient.quantity === 'string' ? parseFloat(ingredient.quantity) : ingredient.quantity;
+      const canonical = convertToCanonical(qty, ingredient.unit, ingredient.name);
+
       return {
         name: ingredient.name,
-        quantity: typeof ingredient.quantity === 'string' ? parseFloat(ingredient.quantity) : ingredient.quantity,
-        unit: ingredient.unit,
+        quantity: canonical.quantity,
+        unit: canonical.unit,
         inventory_item_id: inventoryItem.id,
         confidence: inventoryItem.confidence,
       };
