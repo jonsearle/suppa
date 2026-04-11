@@ -778,3 +778,53 @@ function parseRecipeAdjustmentsLocally(
 
   return adjustments;
 }
+
+/**
+ * Determine if an ingredient is critical to a recipe
+ * Critical = main protein/carb/fat, not just seasoning
+ */
+export async function isIngredientCritical(
+  ingredientName: string,
+  recipe: { name: string; description: string; ingredients: Array<{ name: string; quantity: number; unit: string }> }
+): Promise<boolean> {
+  if (!hasOpenAiApiKey()) {
+    // Local fallback: check if ingredient is in first half of ingredients (usually the main ones)
+    const mainIngredients = recipe.ingredients.slice(0, Math.ceil(recipe.ingredients.length / 2));
+    return mainIngredients.some(ing => ing.name.toLowerCase() === ingredientName.toLowerCase());
+  }
+
+  const client = getOpenAIClient();
+
+  try {
+    const response = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      max_tokens: 100,
+      messages: [
+        {
+          role: 'system',
+          content: `You are a culinary expert. Determine if an ingredient is critical to a recipe.
+
+Critical ingredients = main protein, carb, or fat that the recipe depends on
+Non-critical = seasonings, garnishes, flavor additions that can be substituted or omitted
+
+Reply with ONLY "yes" or "no".`
+        },
+        {
+          role: 'user',
+          content: `Recipe: ${recipe.name} - ${recipe.description}
+Ingredients: ${recipe.ingredients.map(i => `${i.name}`).join(', ')}
+
+Is "${ingredientName}" critical to this recipe?`
+        }
+      ]
+    });
+
+    const answer = response.choices[0].message.content?.toLowerCase().trim() ?? 'no';
+    return answer.includes('yes');
+  } catch (error) {
+    console.error('Error checking critical ingredient:', error);
+    // Fallback: assume main ingredients (first half) are critical
+    const mainIngredients = recipe.ingredients.slice(0, Math.ceil(recipe.ingredients.length / 2));
+    return mainIngredients.some(ing => ing.name.toLowerCase() === ingredientName.toLowerCase());
+  }
+}

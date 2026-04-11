@@ -442,6 +442,36 @@ describe('Recipe Adjustments (Task 7: Conversational Cooking)', () => {
 });
 
 /**
+ * Critical Ingredient Detection (Task 4)
+ *
+ * Tests that the system can identify critical ingredients in a recipe
+ * Critical = main protein/carb/fat, not just seasoning
+ */
+describe('Critical Ingredient Detection', () => {
+  test('should identify critical ingredients in a recipe', async () => {
+    const { isIngredientCritical } = await import('../netlify/functions/api/utils/prompts');
+
+    const recipe = {
+      name: 'Chicken Curry',
+      description: 'Spiced curry with chicken',
+      ingredients: [
+        { name: 'chicken', quantity: 500, unit: 'g' },
+        { name: 'coconut milk', quantity: 400, unit: 'ml' },
+        { name: 'salt', quantity: 1, unit: 'to taste' }
+      ],
+    };
+
+    // Should detect that chicken is critical
+    const isCritical = await isIngredientCritical('chicken', recipe);
+    expect(isCritical).toBe(true);
+
+    // Salt is probably not critical
+    const isSaltCritical = await isIngredientCritical('salt', recipe);
+    expect(isSaltCritical).toBe(false);
+  });
+});
+
+/**
  * Unit Conversion in Deduction (Task 8 Fix)
  *
  * Tests that deduction properly converts inventory units to match recipe canonical units

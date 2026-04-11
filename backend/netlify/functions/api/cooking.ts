@@ -8,7 +8,7 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { generateRecipeDetail, parseRecipeAdjustments, RecipeAdjustment } from './utils/prompts';
+import { generateRecipeDetail, parseRecipeAdjustments, RecipeAdjustment, isIngredientCritical } from './utils/prompts';
 import { getInventory, deductInventoryQuantity } from './utils/db';
 import { RecipeDetail, InventoryItem, StartCookingRequest } from '../shared/types';
 
@@ -460,6 +460,14 @@ router.post('/confirm-adjustments', async (req: Request, res: Response) => {
           };
         }
       } else if (adjustment.type === 'removal') {
+        // Check if this is a critical ingredient
+        const isCritical = await isIngredientCritical(adjustment.ingredient, session.recipe);
+
+        // Store warning in adjustment response for frontend
+        if (isCritical) {
+          (adjustment as any).warning = `⚠️ This is a critical ingredient. Recipe may not work without ${adjustment.ingredient}.`;
+        }
+
         // Remove ingredient from recipe
         updatedIngredients = updatedIngredients.filter(
           (ing) => ing.name.toLowerCase() !== adjustment.ingredient.toLowerCase()
