@@ -287,6 +287,18 @@ Handle edge cases:
       throw new Error('Response is not an array');
     }
 
+    const { convertToCanonical, cacheCanonicalUnit } = await import('./units');
+
+    // Cache canonical unit for each ingredient
+    parsed.forEach((item: any) => {
+      const canonicalResult = convertToCanonical(
+        item.quantity_approx || 1,
+        item.unit,
+        item.name
+      );
+      cacheCanonicalUnit(item.name, canonicalResult.unit);
+    });
+
     return parsed.map((item: any) => ({
       name: item.name || '',
       canonical_name: item.canonical_name || getCanonicalName(item.name || ''),
