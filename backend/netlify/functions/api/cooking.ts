@@ -507,7 +507,7 @@ router.post('/confirm-adjustments', async (req: Request, res: Response) => {
 
     // Map updated recipe ingredients to inventory for deduction
     const currentInventory = await getInventory();
-    const ingredientsToDeduct = updatedRecipe.ingredients.map((ingredient) => {
+    const ingredientsToDeduct = updatedRecipe.ingredients.map((ingredient: any) => {
       const inventoryItem = currentInventory.find(
         (item) =>
           item.name.toLowerCase() === ingredient.name.toLowerCase() ||

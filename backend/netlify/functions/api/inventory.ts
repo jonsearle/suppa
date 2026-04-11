@@ -6,9 +6,9 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { parseInventoryInput } from './utils/prompts.ts';
-import { getInventory, addInventoryItem, clearInventory } from './utils/db.ts';
-import { InventoryItem } from '../shared/types.ts';
+import { parseInventoryInput } from './utils/prompts.js';
+import { getInventory, addInventoryItem, clearInventory } from './utils/db.js';
+import { InventoryItem } from '../shared/types.js';
 
 const router = Router();
 

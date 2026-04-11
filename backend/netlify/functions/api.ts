@@ -13,9 +13,11 @@
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import 'dotenv/config';
-import inventoryRouter from './api/inventory.ts';
-import chatRouter from './api/chat.ts';
-import cookingRouter from './api/cooking.ts';
+import { Handler } from '@netlify/functions';
+import serverless from 'serverless-http';
+import inventoryRouter from './api/inventory.js';
+import chatRouter from './api/chat.js';
+import cookingRouter from './api/cooking.js';
 
 const app: Express = express();
 
@@ -42,4 +44,8 @@ app.use((err: any, req: Request, res: Response) => {
   });
 });
 
+// Netlify Functions handler using serverless-http
+export const handler: Handler = serverless(app) as any;
+
+// Also export the app for other uses
 export default app;

@@ -172,7 +172,7 @@ export const InventoryForm: React.FC<InventoryFormProps> = ({ onInventoryUpdate 
                   </p>
                 </div>
                 <div className="text-xs text-gray-400 ml-4">
-                  {new Date(item.date_added).toLocaleDateString()}
+                  {item.date_added ? new Date(item.date_added).toLocaleDateString() : ''}
                 </div>
               </div>
             ))}
