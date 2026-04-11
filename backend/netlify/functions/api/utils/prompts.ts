@@ -587,6 +587,7 @@ export interface RecipeAdjustment {
   substitute_with?: string;
   reason?: string;
   confidence?: 'exact' | 'approximate';
+  adjustment_type?: 'inventory_correction' | 'recipe_constraint' | 'both';
 }
 
 /**
@@ -635,12 +636,16 @@ For each adjustment mentioned in user input, return:
 - substitute_with: if substitution (e.g. "cod" when replacing chicken)
 - confidence: 'exact' if user specified precise amount, 'approximate' if vague ("about", "around", "some")
 - reason: if removal (e.g. "gone off", "ran out", "don't have")
+- adjustment_type (QUANTITY ONLY): Infer whether user means:
+  * 'inventory_correction': "I only have X" (inventory was wrong, needs updating)
+  * 'recipe_constraint': "I only want to use X" (recipe adjustment only, don't update inventory)
+  * 'both': "I have exactly X and using it all" (update inventory AND recipe)
 
 Examples:
-"I only have 300g flour" → { type: 'quantity', ingredient: 'flour', quantity: 300, unit: 'g', confidence: 'exact' }
+"I only have 300g flour" → { type: 'quantity', ingredient: 'flour', quantity: 300, unit: 'g', confidence: 'exact', adjustment_type: 'inventory_correction' }
 "milk is gone off" → { type: 'removal', ingredient: 'milk', reason: 'gone_off' }
 "use cod instead of chicken" → { type: 'substitution', ingredient: 'chicken', substitute_with: 'cod', confidence: 'exact' }
-"about 6 eggs" → { type: 'quantity', ingredient: 'eggs', quantity: 6, unit: 'pieces', confidence: 'approximate' }
+"about 6 eggs" → { type: 'quantity', ingredient: 'eggs', quantity: 6, unit: 'pieces', confidence: 'approximate', adjustment_type: 'recipe_constraint' }
 "looks good" → {} (no adjustments - return empty array in response)
 
 Return ONLY valid JSON array of adjustment objects. If no adjustments, return empty array [].
@@ -715,12 +720,21 @@ function parseRecipeAdjustmentsLocally(
     // Find matching ingredient in recipe
     for (const [ingKey, ingValue] of ingredientMap) {
       if (ingKey.includes(ingredient) || ingredient.includes(ingKey.split('_')[0])) {
+        // Infer adjustment_type from context
+        let adjustmentType: 'inventory_correction' | 'recipe_constraint' | 'both' = 'recipe_constraint';
+        if (/^(i only have|only have|i have)/.test(userInput.toLowerCase())) {
+          adjustmentType = 'inventory_correction';
+        } else if (/\(have exactly|using all|using it all\)/.test(userInput.toLowerCase())) {
+          adjustmentType = 'both';
+        }
+
         adjustments.push({
           type: 'quantity',
           ingredient: ingValue.name,
           quantity,
           unit,
           confidence: 'exact',
+          adjustment_type: adjustmentType,
         });
         break;
       }

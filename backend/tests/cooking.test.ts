@@ -407,6 +407,38 @@ describe('Recipe Adjustments (Task 7: Conversational Cooking)', () => {
     // Should be empty or contain no actionable adjustments
     expect(result.length).toBe(0);
   });
+
+  /**
+   * Test 7: Distinguish between inventory correction and recipe constraint
+   *
+   * Task 3: User says "I only have 300g flour"
+   * Expected: System infers whether this means:
+   * - 'inventory_correction': "I was wrong about having 500g, I only have 300g"
+   * - 'recipe_constraint': "I only want to use 300g in this recipe"
+   * - 'both': "I have exactly 300g and using all of it"
+   */
+  test('should distinguish between inventory correction and recipe constraint', async () => {
+    const userInput = 'I only have 300g flour';
+    const recipeContext = {
+      ingredients: [
+        { name: 'flour', quantity: 500, unit: 'g' },
+        { name: 'milk', quantity: 300, unit: 'ml' },
+      ],
+    };
+
+    const result = await parseRecipeAdjustments(userInput, recipeContext);
+
+    expect(Array.isArray(result)).toBe(true);
+    expect(result.length).toBeGreaterThan(0);
+
+    const flourAdjustment = result.find((adj) => adj.ingredient.toLowerCase() === 'flour');
+    expect(flourAdjustment).toBeDefined();
+    expect(flourAdjustment?.type).toBe('quantity');
+
+    // NEW: Should have adjustment_type field
+    expect(flourAdjustment).toHaveProperty('adjustment_type');
+    expect(['inventory_correction', 'recipe_constraint', 'both']).toContain(flourAdjustment?.adjustment_type);
+  });
 });
 
 /**
