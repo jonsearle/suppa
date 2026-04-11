@@ -5,7 +5,7 @@ describe('Unit Normalization Integration', () => {
       method: 'POST',
       body: JSON.stringify({ user_input: '500g flour, some milk, 3 eggs' })
     });
-    const { data: inventory } = await addResponse.json();
+    const { data: inventory } = await addResponse.json() as any;
     
     expect(inventory).toHaveLength(3);
     expect(inventory[0].confidence).toBe('exact');
@@ -16,7 +16,7 @@ describe('Unit Normalization Integration', () => {
       method: 'POST',
       body: JSON.stringify({ meal_type: 'breakfast' })
     });
-    const { data: recipes } = await suggestResponse.json();
+    const { data: recipes } = await suggestResponse.json() as any;
     
     expect(recipes.length).toBeGreaterThan(0);
 
@@ -29,7 +29,7 @@ describe('Unit Normalization Integration', () => {
         recipe_time_mins: recipes[0].time_estimate_mins
       })
     });
-    const { data: cookingSession } = await startResponse.json();
+    const { data: cookingSession } = await startResponse.json() as any;
     
     expect(cookingSession.session_id).toBeDefined();
 
@@ -43,7 +43,7 @@ describe('Unit Normalization Integration', () => {
         ]
       })
     });
-    const { data: adjustedCooking } = await adjustResponse.json();
+    const { data: adjustedCooking } = await adjustResponse.json() as any;
     
     expect(adjustedCooking.ingredients_to_deduct).toBeDefined();
 
@@ -55,13 +55,13 @@ describe('Unit Normalization Integration', () => {
         deduction_confirmed: true
       })
     });
-    const { data: completed } = await completeResponse.json();
+    const { data: completed } = await completeResponse.json() as any;
     
     expect(completed.deducted_items.length).toBeGreaterThan(0);
 
     // 6. Check inventory updated
     const inventoryResponse = await fetch('/api/inventory');
-    const { data: updatedInventory } = await inventoryResponse.json();
+    const { data: updatedInventory } = await inventoryResponse.json() as any;
     
     // Should have remainder items and marked used items
     expect(updatedInventory.length).toBeGreaterThanOrEqual(inventory.length);

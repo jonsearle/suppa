@@ -69,6 +69,9 @@ async function parseInventoryInputLocally(
     'soy sauce',
     'spice',
     'spices',
+    'basil',
+    'garlic',
+    'parsley',
   ]);
 
   return userInput
@@ -78,7 +81,7 @@ async function parseInventoryInputLocally(
     .map((part) => {
       const cleaned = part.replace(/^(i have|we have|got)\s+/i, '').trim();
       const qtyMatch = cleaned.match(
-        /^(\d+(?:\.\d+)?)\s*(kg|g|ml|l|cups?|cup|tbsp|tsp|pieces?|piece|cloves?|bunch(?:es)?)?\s*(?:of\s+)?(.+)$/i
+        /^(\d+(?:\.\d+)?)\s*(kilogram|kg|gram|g|milliliter|ml|liter|l|tablespoons?|tbsp|teaspoons?|tsp|cups?|cup|ounces?|oz|pieces?|piece|cloves?|bunch(?:es)?)?\s*(?:of\s+)?(.+)$/i
       );
 
       let name = cleaned;
@@ -96,8 +99,33 @@ async function parseInventoryInputLocally(
         hasItem = true;
         confidence = 'exact';
       } else if (/^(some|a little|a bit|a handful of|a bunch of)\s+/i.test(cleaned)) {
+        const approxMatch = cleaned.match(/^(some|a little|a bit|a handful of|a bunch of)\s+/i);
         name = cleaned.replace(/^(some|a little|a bit|a handful of|a bunch of)\s+/i, '').trim();
         quantity = 1;
+
+        // Extract unit from approximate quantity
+        if (approxMatch && /a bunch of/i.test(approxMatch[1])) {
+          unit = 'bunch';
+        }
+      }
+
+      // Check if the extracted name is a pantry staple
+      if (!hasItem && name && pantryStaples.has(name.toLowerCase())) {
+        hasItem = true;
+      }
+
+      // Infer unit for countable items if not provided
+      let finalUnit = unit;
+      if (!finalUnit && quantity && !hasItem) {
+        // If it's a countable item without a unit, default to "pieces"
+        const countableKeywords = ['chicken', 'breast', 'tomato', 'apple', 'egg', 'carrot', 'onion', 'potato', 'pepper', 'cucumber', 'spinach', 'lettuce', 'basil', 'parsley', 'clove'];
+        const isCountable = countableKeywords.some(keyword => name.toLowerCase().includes(keyword));
+        if (isCountable) {
+          // But don't override if unit is already set (like "bunch")
+          if (!unit) {
+            finalUnit = 'pieces';
+          }
+        }
       }
 
       const canonical = getCanonicalName(name) || inferCanonicalName(name);
@@ -106,7 +134,7 @@ async function parseInventoryInputLocally(
         canonical_name: canonical,
         has_item: hasItem,
         quantity_approx: hasItem ? undefined : quantity,
-        unit,
+        unit: finalUnit,
         confidence,
       };
     });
@@ -215,7 +243,7 @@ export async function parseInventoryInput(
   const systemPrompt = `You are a kitchen inventory parser. Your job is to extract food items from user input.
 
 For each item, extract:
-1. name: The food item (what user said, e.g., "chicken breasts", "some salad")
+1. name: The food item name only, stripped of quantities and units (e.g., "chicken breast", "oil", NOT "3 chicken breasts" or "2 tablespoons of oil")
 2. canonical_name: Normalized version (e.g., "chicken_breast", "salad_leaves") - you'll compute this from name
 3. has_item: boolean. True ONLY for pantry staples where quantity doesn't matter (salt, spices, oils, condiments)
 4. quantity_approx: The quantity as a number. For approximate quantities, use best judgment:
@@ -225,32 +253,35 @@ For each item, extract:
    - Fractions: parse literally ("half" = 0.5, "1/3" = 0.33)
    - For has_item=true items, quantity_approx = null
 5. unit: The unit of measurement. Use standard units:
-   - "pieces" or "count" for individual items
+   - "pieces" for countable items (chicken breasts, tomatoes, eggs, apples, etc.) - ALWAYS use "pieces" if no explicit unit given
+   - "bunch" for bunches/bundles
    - "g" for grams
    - "ml" for milliliters
    - "cup" for cups
    - "tbsp" for tablespoons
-   - "bunch" for bunches
-   - Leave blank if no unit applies
+   - null for bulk items without quantifiable units (like "salt", "spice")
 6. confidence: "exact" if user specified quantity precisely, "approximate" if estimated
 
 Return ONLY a JSON array, no other text. Example format:
 [
   {"name": "chicken breast", "canonical_name": "chicken_breast", "quantity_approx": 3, "unit": "pieces", "confidence": "exact"},
-  {"name": "salt", "canonical_name": "salt", "has_item": true, "quantity_approx": null, "unit": null, "confidence": "exact"},
-  {"name": "some salad", "canonical_name": "salad_leaves", "quantity_approx": 1, "unit": null, "confidence": "approximate"}
+  {"name": "tomato", "canonical_name": "tomato", "quantity_approx": 2, "unit": "pieces", "confidence": "exact"},
+  {"name": "basil", "canonical_name": "basil", "quantity_approx": 1, "unit": "bunch", "confidence": "exact"},
+  {"name": "salt", "canonical_name": "salt", "has_item": true, "quantity_approx": null, "unit": null, "confidence": "exact"}
 ]
 
 Categories:
-1. Pantry staples (salt, spices, oils): has_item=true, confidence="exact"
-2. Exact quantities (500g beef, 3 apples): confidence="exact"
-3. Exact counts (2 chicken breasts): unit="pieces", confidence="exact"
-4. Rough quantities (some salad, lots of carrots): confidence="approximate"
+1. Pantry staples (salt, spices, loose items): has_item=true, unit=null, quantity_approx=null
+2. Exact quantities with units (500g beef, 240ml milk): confidence="exact"
+3. Exact counts (3 apples, 2 chicken breasts): unit="pieces", confidence="exact"
+4. Bunches/bundles (1 bunch basil): unit="bunch", confidence="exact"
+5. Rough quantities (some salad, lots of carrots): confidence="approximate", unit="pieces" (if countable)
 
 Handle edge cases:
 - Ignore articles like "a", "an", "the"
-- Normalize item names (e.g., "tomatoes" → "tomato")
-- Extract units from compound items (e.g., "2 tablespoons of oil" → name: "oil", quantity_approx: 2, unit: "tbsp")`;
+- Normalize item names (e.g., "tomatoes" → "tomato", "chicken breasts" → "chicken breast")
+- Extract units from compound items (e.g., "2 tablespoons of oil" → name: "oil", quantity_approx: 2, unit: "tbsp")
+- For countable items (meats, vegetables, fruits, eggs) WITHOUT an explicit unit, default to unit: "pieces"`;
 
   try {
     const response = await client.chat.completions.create({
@@ -299,14 +330,60 @@ Handle edge cases:
       cacheCanonicalUnit(item.name, canonicalResult.unit);
     });
 
-    return parsed.map((item: any) => ({
-      name: item.name || '',
-      canonical_name: item.canonical_name || getCanonicalName(item.name || ''),
-      has_item: item.has_item || false,
-      quantity_approx: item.quantity_approx || null,
-      unit: item.unit || null,
-      confidence: item.confidence || 'approximate',
-    }));
+    return parsed.map((item: any) => {
+      // Clean up name if it contains units (e.g., "2 tablespoons oil" → "oil")
+      let cleanName = item.name || '';
+      let cleanUnit = item.unit;
+
+      // Remove common unit prefixes from name
+      const unitPrefixes = ['tablespoons?', 'tbsp', 'teaspoons?', 'tsp', 'cups?', 'ml', 'grams?', 'g', 'ounces?', 'oz', 'pieces?', 'count'];
+      unitPrefixes.forEach(prefix => {
+        const regex = new RegExp(`^\\d*\\.?\\d*\\s*${prefix}\\s+(?:of\\s+)?`, 'i');
+        cleanName = cleanName.replace(regex, '');
+      });
+
+      // Infer unit for countable items if missing
+      let inferredUnit = cleanUnit || null;
+      if (!inferredUnit && !item.has_item && item.quantity_approx !== null) {
+        // Heuristics for detecting countable items
+        const countableKeywords = ['chicken', 'breast', 'tomato', 'apple', 'egg', 'carrot', 'onion', 'potato', 'pepper', 'cucumber', 'spinach', 'lettuce', 'basil', 'parsley', 'clove', 'leaf', 'leaves', 'slice'];
+        const isCountable = countableKeywords.some(keyword => cleanName.toLowerCase().includes(keyword));
+
+        // If it looks countable and has a quantity, use "pieces"
+        if (isCountable) {
+          inferredUnit = 'pieces';
+        }
+        // Also use pieces if it's a bunch (explicit user input about quantity)
+        else if (cleanUnit === 'bunch' || item.unit === 'bunch') {
+          inferredUnit = 'bunch';
+        }
+      }
+
+      // Handle the case where user specified "bunch" explicitly
+      if (cleanUnit === 'bunch' || item.unit === 'bunch') {
+        inferredUnit = 'bunch';
+      }
+
+      let canonicalNameValue = item.canonical_name || getCanonicalName(cleanName || '');
+
+      // Clean canonical name if it contains units or articles
+      let cleanCanonicalName = canonicalNameValue;
+      unitPrefixes.forEach(prefix => {
+        const regex = new RegExp(`^${prefix}_of_|_${prefix}s?|${prefix}_of_`, 'i');
+        cleanCanonicalName = cleanCanonicalName.replace(regex, '');
+      });
+      // Remove extra units that might be in the canonical name (e.g., "tablespoons_oil" → "oil")
+      cleanCanonicalName = cleanCanonicalName.replace(/^[\w]+_of_/, '');
+
+      return {
+        name: cleanName.trim(),
+        canonical_name: cleanCanonicalName.trim(),
+        has_item: item.has_item || false,
+        quantity_approx: item.quantity_approx || null,
+        unit: inferredUnit,
+        confidence: item.confidence || 'approximate',
+      };
+    });
   } catch (error) {
     console.error('Error parsing inventory input:', error);
     throw new Error(
