@@ -118,7 +118,9 @@ export const RecipeDetail: React.FC<RecipeDetailProps> = ({
           setConfirming({
             adjustment: quantityAdj,
             inventoryQty: quantityAdj.quantity,
-            recipeQty: recipeIngredient.quantity
+            recipeQty: typeof recipeIngredient.quantity === 'string'
+              ? parseFloat(recipeIngredient.quantity)
+              : recipeIngredient.quantity
           });
         }
       } else {
